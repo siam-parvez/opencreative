@@ -1,7 +1,7 @@
 //! Renders the Panels screen with sample values:
-//! `cargo run --example panels -- out.png [lines|hud] [portrait]`.
+//! `cargo run --example panels -- out.png [lines|hud] [landscape|portrait] [claude]`.
 use opencreative_render::panels::{Layout, Skin, render};
-use opencreative_sensors::{Gpu, Metric, Snapshot};
+use opencreative_sensors::{ClaudeUsage, ClaudeWindow, Gpu, Metric, Snapshot};
 
 fn main() {
     let mut args = std::env::args().skip(1);
@@ -35,7 +35,22 @@ fn main() {
     let mut snap = history.last().cloned().unwrap_or_default();
     snap.cpu_temp_c = Some(55.0);
     snap.gpu.load_pct = Some(89.0);
+    let claude = args.next().as_deref() == Some("claude");
+    snap.claude = Some(ClaudeUsage {
+        session: Some(ClaudeWindow {
+            pct: 42.0,
+            resets_in_secs: Some(9_000),
+        }),
+        weekly: Some(ClaudeWindow {
+            pct: 58.0,
+            resets_in_secs: Some(330_000),
+        }),
+    });
     let layout = match skin {
+        _ if claude => Layout {
+            primary: Metric::ClaudeSession,
+            secondary: [Metric::ClaudeWeekly, Metric::CpuTemp],
+        },
         Skin::Lines => Layout {
             primary: Metric::CpuTemp,
             secondary: [Metric::GpuTemp, Metric::GpuPower],

@@ -28,7 +28,13 @@ pub fn header(ui: &mut egui::Ui, title: &str, subtitle: Option<&str>) {
 pub fn card_title(ui: &mut egui::Ui, icon: Icon, title: &str, detail: Option<&str>) {
     let p = Palette::of(ui.ctx());
     ui.horizontal(|ui| {
-        icons::show(ui, icon, 18.0, p.text);
+        // Claude's mark keeps its own color.
+        let color = if icon == Icon::Claude {
+            icons::CLAUDE
+        } else {
+            p.text
+        };
+        icons::show(ui, icon, 18.0, color);
         ui.label(
             egui::RichText::new(title)
                 .font(theme::semibold(16.0))

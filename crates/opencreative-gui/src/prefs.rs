@@ -31,7 +31,7 @@ impl Appearance {
 #[serde(default)]
 pub struct Prefs {
     pub appearance: Appearance,
-    /// Show Claude usage from OpenCUT (off unless the user turns it on).
+    /// Show Claude plan usage (off unless the user turns it on).
     pub claude_usage: bool,
     /// Whether first-launch setup (starting with the computer) has run.
     pub first_run_done: bool,

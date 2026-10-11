@@ -3,10 +3,10 @@
 //! when that integration is on, and a history chart.
 
 use eframe::egui::{self, Color32, Sense, Stroke, pos2, vec2};
-use opencreative_sensors::{ClaudeWindow, Snapshot};
+use opencreative_sensors::{ClaudeStatus, ClaudeWindow, Snapshot, countdown};
 
 use crate::App;
-use crate::icons::{self, Icon};
+use crate::icons::{self, CLAUDE, Icon};
 use crate::pages::{card_title, header};
 use crate::theme::{self, Palette};
 use crate::widgets::{self, bytes, rate, stat};
@@ -15,7 +15,6 @@ use crate::widgets::{self, bytes, rate, stat};
 const MAX_DISKS: usize = 3;
 const GAUGE: f32 = 156.0;
 const SPARK_HEIGHT: f32 = 46.0;
-const CLAUDE: Color32 = Color32::from_rgb(0xd9, 0x77, 0x57);
 
 pub fn show(app: &mut App, ui: &mut egui::Ui) {
     header(ui, "Dashboard", Some("Live readings from this computer"));
@@ -259,17 +258,27 @@ fn network(ui: &mut egui::Ui, s: &Snapshot, samples: &[Snapshot]) {
 
 fn claude(ui: &mut egui::Ui, s: &Snapshot) {
     let p = Palette::of(ui.ctx());
-    card_title(ui, Icon::Dashboard, "Claude usage", Some("via OpenCUT"));
+    card_title(ui, Icon::Claude, "Claude", Some("plan usage"));
     let Some(usage) = s.claude else {
-        ui.label(
-            egui::RichText::new(
-                "No usage yet. Start OpenCUT's ocutd service to see your Claude plan limits here.",
-            )
-            .color(p.muted),
-        );
+        let why = match opencreative_sensors::claude_status() {
+            ClaudeStatus::NotSignedIn => {
+                "Sign in to Claude Code on this computer to see your limits."
+            }
+            ClaudeStatus::Expired => {
+                "Your Claude Code login expired. Run `claude` once to renew it."
+            }
+            ClaudeStatus::Unreachable => {
+                "Can't reach Anthropic right now. Retrying in a few minutes."
+            }
+            ClaudeStatus::Off | ClaudeStatus::Ok => "Checking your limits…",
+        };
+        ui.label(egui::RichText::new(why).color(p.muted));
         return;
     };
-    for (label, window) in [("5-hour session", usage.session), ("Weekly", usage.weekly)] {
+    for (label, window) in [
+        ("5-hour limit", usage.session),
+        ("Weekly limit", usage.weekly),
+    ] {
         claude_window(ui, label, window);
         ui.add_space(10.0);
     }
@@ -291,7 +300,7 @@ fn claude_window(ui: &mut egui::Ui, label: &str, window: Option<ClaudeWindow>) {
     widgets::usage_bar_colored(ui, window.map_or(0.0, |w| w.pct / 100.0), 14.0, CLAUDE);
     let reset = window
         .and_then(|w| w.resets_in_secs)
-        .map_or("No active window".to_owned(), |s| {
+        .map_or("Not started".to_owned(), |s| {
             format!("Resets in {}", countdown(s))
         });
     ui.label(egui::RichText::new(reset).small().color(p.muted));
@@ -369,17 +378,6 @@ fn sparkline(ui: &mut egui::Ui, lines: &[(Vec<Option<f32>>, Color32)], caption: 
     ui.label(egui::RichText::new(caption).small().color(p.faint));
 }
 
-fn countdown(secs: u64) -> String {
-    let (d, h, m) = (secs / 86_400, secs / 3600 % 24, secs / 60 % 60);
-    if d > 0 {
-        format!("{d}d {h}h")
-    } else if h > 0 {
-        format!("{h}h {m}m")
-    } else {
-        format!("{m}m")
-    }
-}
-
 fn number(v: f32) -> String {
     if v >= 10.0 {
         format!("{v:.0}")
@@ -398,16 +396,4 @@ fn mhz(mhz: f32) -> String {
 
 fn celsius(c: Option<f32>) -> String {
     c.map_or("—".to_owned(), |c| format!("{c:.0} °C"))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn countdowns_are_short() {
-        assert_eq!(countdown(15794), "4h 23m");
-        assert_eq!(countdown(513794), "5d 22h");
-        assert_eq!(countdown(300), "5m");
-    }
 }

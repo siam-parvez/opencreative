@@ -114,13 +114,17 @@ Laid out like DeepCool's app, with a light theme (dark available):
 
 ### Claude usage (optional)
 
-With [OpenCUT](https://github.com/siam-parvez/OpenCUT)'s `ocutd` running,
-turn on **Settings → Integrations → Claude usage** to see your Claude plan's
-5-hour and weekly usage on the dashboard, and to pick them as cooler-screen
-readings (`claude_5h`, `claude_week`, or the "Claude usage" preset).
-OpenCreative only reads OpenCUT's snapshot file
-(`$XDG_RUNTIME_DIR/opencut/usage.json`); it never contacts Anthropic or reads
-credentials. Not affiliated with Anthropic.
+If you use [Claude Code](https://claude.com/claude-code), turn on
+**Settings → Integrations → Claude usage** to see your 5-hour and weekly
+limits, with the time left until each resets, on the dashboard and as
+cooler-screen readings (`claude_5h`, `claude_week`, or the "Claude usage"
+preset).
+
+It's off until you turn it on. It reuses the login Claude Code already keeps
+on this computer (`~/.claude/.credentials.json`, or the keychain on macOS),
+sends it only to Anthropic's usage endpoint, checks every 90 seconds, and
+never refreshes or stores the token. If the login has expired, run `claude`
+once. Not affiliated with Anthropic.
 
 The app talks to the daemon; if none is running it starts one inside the
 window, so the screen only keeps updating while the window is open — Settings
