@@ -14,7 +14,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use opencreative_device::{self as device, Display};
-use opencreative_render::media::{self, Fit};
+use opencreative_render::media::{self, Item, Source};
+use opencreative_render::video::{self, Stream};
 use opencreative_render::{Pixmap, Rotation, monitor, panels, rotate, solid, zen};
 use opencreative_sensors::Sensors;
 use thiserror::Error;
@@ -30,6 +31,10 @@ pub enum Error {
     },
     #[error("{0} has no frames")]
     EmptyMedia(PathBuf),
+    #[error(transparent)]
+    Video(#[from] video::VideoError),
+    #[error("the playlist is empty")]
+    EmptyPlaylist,
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -47,10 +52,11 @@ pub enum Scene {
         skin: panels::Skin,
         interval: Duration,
     },
-    /// A still image or animated GIF.
+    /// Images, GIFs and videos, each shown for `item_time` in turn (a single
+    /// item stays up for good).
     Media {
-        path: PathBuf,
-        fit: Fit,
+        items: Vec<Item>,
+        item_time: Duration,
     },
     Solid([u8; 3]),
     /// A calm screen with a dim clock (Zen mode).
@@ -77,10 +83,23 @@ pub struct Output {
     pub hold: Option<Duration>,
 }
 
-/// Decoded media frames, rotated, and the panel size they were loaded for.
+/// The playlist item on screen, ready to play at the panel size it was
+/// loaded for.
 struct LoadedMedia {
+    index: usize,
     size: (u32, u32),
-    frames: Vec<(Pixmap, Duration)>,
+    started: Instant,
+    content: Content,
+}
+
+enum Content {
+    /// Decoded image or GIF frames, rotated, with their delays.
+    Frames {
+        frames: Vec<(Pixmap, Duration)>,
+        cursor: usize,
+    },
+    /// A video being decoded as it plays.
+    Video(Stream),
 }
 
 /// Produces frames for a scene.
@@ -89,7 +108,6 @@ pub struct Player {
     rotation: Rotation,
     sensors: Option<Sensors>,
     media: Option<LoadedMedia>,
-    cursor: usize,
     /// Recent readings, oldest first, for skins that chart them.
     history: VecDeque<opencreative_sensors::Snapshot>,
     /// Whether this player turned Claude usage polling on.
@@ -107,7 +125,6 @@ impl Player {
             rotation,
             sensors,
             media: None,
-            cursor: 0,
             history: VecDeque::with_capacity(HISTORY),
             claude_on: false,
         }
@@ -177,35 +194,123 @@ impl Player {
                 frame: rotate(&solid(w, h, *rgb), self.rotation),
                 hold: None,
             }),
-            Scene::Media { path, fit } => {
-                if self.media.as_ref().is_none_or(|m| m.size != (w, h)) {
-                    let frames = media::load(path, w, h, *fit).map_err(|source| Error::Media {
-                        path: path.clone(),
-                        source,
-                    })?;
-                    if frames.is_empty() {
-                        return Err(Error::EmptyMedia(path.clone()));
-                    }
-                    // Rotate once up front so playback is just USB writes.
-                    let frames = frames
-                        .into_iter()
-                        .map(|f| (rotate(&f.pixmap, self.rotation), f.delay))
-                        .collect();
-                    self.media = Some(LoadedMedia {
-                        size: (w, h),
-                        frames,
-                    });
-                    self.cursor = 0;
+            Scene::Media { items, item_time } => {
+                let (items, item_time) = (items.clone(), *item_time);
+                self.next_media(&items, item_time, (w, h))
+            }
+        }
+    }
+
+    /// The next playlist frame. Moves to the next item when this one's time
+    /// is up; an item that fails to load is skipped unless it's the only one.
+    fn next_media(
+        &mut self,
+        items: &[Item],
+        item_time: Duration,
+        size: (u32, u32),
+    ) -> Result<Output> {
+        if items.is_empty() {
+            return Err(Error::EmptyPlaylist);
+        }
+        let mut index = match &self.media {
+            Some(m) if m.size == size => {
+                let due = items.len() > 1 && m.started.elapsed() >= item_time;
+                if due {
+                    (m.index + 1) % items.len()
+                } else {
+                    m.index % items.len()
                 }
-                let frames = &self.media.as_ref().expect("loaded above").frames;
-                let (frame, delay) = &frames[self.cursor % frames.len()];
-                self.cursor = (self.cursor + 1) % frames.len();
+            }
+            _ => 0,
+        };
+        let reload = self
+            .media
+            .as_ref()
+            .is_none_or(|m| m.size != size || m.index != index);
+        if reload {
+            self.media = None;
+            let mut last_error = None;
+            for _ in 0..items.len() {
+                match self.load_item(&items[index], size) {
+                    Ok(content) => {
+                        self.media = Some(LoadedMedia {
+                            index,
+                            size,
+                            started: Instant::now(),
+                            content,
+                        });
+                        break;
+                    }
+                    Err(e) => {
+                        log::warn!("skipping playlist item: {e}");
+                        last_error = Some(e);
+                        index = (index + 1) % items.len();
+                    }
+                }
+            }
+            if self.media.is_none() {
+                return Err(last_error.unwrap_or(Error::EmptyPlaylist));
+            }
+        }
+        let rotation = self.rotation;
+        let media = self.media.as_mut().expect("loaded above");
+        // Time left before the next item, if there is one.
+        let left = (items.len() > 1).then(|| item_time.saturating_sub(media.started.elapsed()));
+        match &mut media.content {
+            Content::Frames { frames, cursor } => {
+                let (frame, delay) = &frames[*cursor % frames.len()];
+                *cursor = (*cursor + 1) % frames.len();
+                let hold = match (frames.len() > 1, left) {
+                    (true, Some(left)) => Some((*delay).min(left)),
+                    (true, None) => Some(*delay),
+                    (false, left) => left,
+                };
                 Ok(Output {
                     frame: frame.clone(),
-                    hold: (frames.len() > 1).then_some(*delay),
+                    hold: hold.map(|h| h.max(Duration::from_millis(10))),
+                })
+            }
+            Content::Video(stream) => {
+                // At the end, loop; a web video that drops out (sites
+                // refuse requests now and then) gets a few more tries.
+                let mut frame = stream.next_frame();
+                for _ in 0..3 {
+                    if frame.is_some() {
+                        break;
+                    }
+                    *stream = Stream::open(&items[media.index], size.0, size.1)?;
+                    frame = stream.next_frame();
+                }
+                let frame = frame.ok_or(Error::Video(video::VideoError::NoFrames))?;
+                Ok(Output {
+                    frame: rotate(&frame, rotation),
+                    hold: Some(Stream::frame_time()),
                 })
             }
         }
+    }
+
+    fn load_item(&self, item: &Item, (w, h): (u32, u32)) -> Result<Content> {
+        if item.is_video() {
+            return Ok(Content::Video(Stream::open(item, w, h)?));
+        }
+        let Source::Path(path) = &item.source else {
+            unreachable!("web addresses are videos");
+        };
+        let frames =
+            media::load(path, w, h, item.fit, item.crop).map_err(|source| Error::Media {
+                path: path.clone(),
+                source,
+            })?;
+        if frames.is_empty() {
+            return Err(Error::EmptyMedia(path.clone()));
+        }
+        // Rotate once up front so playback is just USB writes.
+        let frames = frames
+            .into_iter()
+            .map(|f| (rotate(&f.pixmap, self.rotation), f.delay))
+            .collect();
+        Ok(Content::Frames { frames, cursor: 0 })
     }
 }
 
@@ -287,8 +392,12 @@ mod tests {
         let path = PathBuf::from("/nonexistent/opencreative.png");
         let mut p = Player::new(
             Scene::Media {
-                path: path.clone(),
-                fit: Fit::Cover,
+                items: vec![Item {
+                    source: Source::Path(path.clone()),
+                    fit: media::Fit::Cover,
+                    crop: media::Crop::default(),
+                }],
+                item_time: Duration::from_secs(10),
             },
             Rotation::R0,
         );
@@ -296,6 +405,55 @@ mod tests {
             panic!("expected a media error");
         };
         assert_eq!(got, path);
+    }
+
+    /// Needs ffmpeg on PATH; skipped (passes) without it.
+    #[test]
+    fn plays_a_video_and_moves_through_the_playlist() {
+        let Some(ffmpeg) = video::tool("ffmpeg") else {
+            eprintln!("ffmpeg not found; skipping");
+            return;
+        };
+        let dir = std::env::temp_dir().join(format!("oc-video-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let clip = dir.join("clip.mp4");
+        let made = std::process::Command::new(ffmpeg)
+            .args(["-loglevel", "error", "-y", "-f", "lavfi"])
+            .args(["-i", "color=c=red:s=640x360:d=0.5:r=25"])
+            .args(["-pix_fmt", "yuv420p"])
+            .arg(&clip)
+            .status()
+            .unwrap();
+        assert!(made.success());
+        let item = |source| Item {
+            source,
+            fit: media::Fit::Cover,
+            crop: media::Crop::default(),
+        };
+        let mut p = Player::new(
+            Scene::Media {
+                items: vec![
+                    item(Source::Path(clip.clone())),
+                    item(Source::Path("/nonexistent.png".into())),
+                ],
+                item_time: Duration::from_millis(300),
+            },
+            Rotation::R0,
+        );
+        // Ten frames is longer than the clip: it loops.
+        for _ in 0..12 {
+            let out = p.next(320, 240).unwrap();
+            assert_eq!((out.frame.width(), out.frame.height()), (320, 240));
+            assert_eq!(out.hold, Some(Stream::frame_time()));
+            let px = &out.frame.data()[(120 * 320 + 160) * 4..][..3];
+            assert!(px[0] > 200 && px[1] < 60, "red, got {px:?}");
+        }
+        // Past the item time the broken second item is skipped, back to
+        // the clip.
+        std::thread::sleep(Duration::from_millis(350));
+        assert!(p.next(320, 240).is_ok());
+        assert_eq!(p.media.as_ref().unwrap().index, 0);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

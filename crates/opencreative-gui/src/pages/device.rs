@@ -25,7 +25,7 @@ enum Mode {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Source {
-    Image,
+    Media,
     Color,
 }
 
@@ -263,8 +263,9 @@ fn preview(app: &mut App, ui: &mut egui::Ui) {
         .clamp(1.0, MAX_PREVIEW_ZOOM);
     let screen = vec2(w as f32, h as f32) * zoom / ppp;
     ui.vertical_centered(|ui| {
-        let (bezel, _) =
-            ui.allocate_exact_size(screen + vec2(2.0 * pad, 2.0 * pad), Sense::hover());
+        let (bezel, response) =
+            ui.allocate_exact_size(screen + vec2(2.0 * pad, 2.0 * pad), Sense::drag());
+        pan_and_zoom(app, ui, &response, screen);
         let painter = ui.painter();
         painter.rect_filled(bezel, 16.0, p.bezel);
         let inner = snap_to_pixels(bezel.shrink(pad), ppp, screen);
@@ -284,6 +285,39 @@ fn preview(app: &mut App, ui: &mut egui::Ui) {
     });
     if let Some(e) = &app.preview.error {
         ui.colored_label(p.bad, e);
+    }
+}
+
+/// Dragging the preview moves the selected playlist item's focus point;
+/// scrolling zooms. Both edit a draft that's sent when the edit pauses.
+fn pan_and_zoom(app: &mut App, ui: &egui::Ui, response: &egui::Response, screen: egui::Vec2) {
+    if is_digital(&app.applied.scene) || matches!(app.applied.scene, SceneConfig::Solid { .. }) {
+        return;
+    }
+    let (mut items, secs) = app.playlist();
+    let Some(item) = items.get_mut(app.selected_item) else {
+        return;
+    };
+    let mut edited = false;
+    if response.dragged() {
+        let delta = response.drag_delta();
+        // Moving the picture right shows more of its left: the focus moves
+        // the other way, less so the more it's zoomed in.
+        item.focus[0] = (item.focus[0] - delta.x / screen.x / item.zoom).clamp(0.0, 1.0);
+        item.focus[1] = (item.focus[1] - delta.y / screen.y / item.zoom).clamp(0.0, 1.0);
+        edited = true;
+    }
+    if response.hovered() {
+        let scroll = ui.input(|i| i.smooth_scroll_delta.y);
+        if scroll != 0.0 {
+            item.zoom = (item.zoom * (1.0 + scroll * 0.003))
+                .clamp(1.0, opencreative_render::media::Crop::MAX_ZOOM);
+            edited = true;
+        }
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
+    }
+    if edited {
+        app.set_playlist(items, secs, true);
     }
 }
 
@@ -555,86 +589,317 @@ fn metric_combo(ui: &mut egui::Ui, id: &str, metric: &mut Metric, claude: bool) 
 
 fn multimedia(app: &mut App, ui: &mut egui::Ui) {
     let p = Palette::of(ui.ctx());
-    let ctx = ui.ctx().clone();
     let scene = app.applied.scene.clone();
     let mut source = if matches!(scene, SceneConfig::Solid { .. }) {
         Source::Color
     } else {
-        Source::Image
+        Source::Media
     };
 
     section(ui, "Source");
     if segmented(
         ui,
         &mut source,
-        &[(Source::Image, "Image or GIF"), (Source::Color, "Color")],
+        &[
+            (Source::Media, "Images and video"),
+            (Source::Color, "Color"),
+        ],
     ) {
         match source {
             Source::Color => app.set_scene(SceneConfig::Solid {
                 color: Rgb(SWATCHES[0]),
             }),
-            Source::Image => match &app.media_scene {
-                image @ SceneConfig::Image { .. } => app.set_scene(image.clone()),
-                _ => app.browse_for_image(&ctx),
-            },
+            Source::Media => {
+                let (items, secs) = app.playlist();
+                if items.is_empty() {
+                    let ctx = ui.ctx().clone();
+                    app.browse_for_media(&ctx);
+                } else {
+                    app.set_playlist(items, secs, false);
+                }
+            }
         }
         return;
     }
     ui.add_space(10.0);
 
-    match scene {
-        SceneConfig::Image { path, mut fit } => {
-            drop_zone(app, ui);
-            ui.add_space(10.0);
-            let file = path.file_name().map_or_else(
-                || path.display().to_string(),
-                |f| f.to_string_lossy().into(),
-            );
-            ui.horizontal(|ui| {
-                ui.label(egui::RichText::new("Showing").color(p.muted));
-                ui.label(egui::RichText::new(file).color(p.text))
-                    .on_hover_text(path.display().to_string());
-            });
-            ui.add_space(6.0);
-            ui.label(egui::RichText::new("Fit").color(p.muted));
-            if segmented(
-                ui,
-                &mut fit,
-                &[
-                    (FitConfig::Cover, "Fill"),
-                    (FitConfig::Contain, "Fit"),
-                    (FitConfig::Stretch, "Stretch"),
-                ],
-            ) {
-                app.set_scene(SceneConfig::Image { path, fit });
+    if let SceneConfig::Solid { color } = scene {
+        let mut rgb = color.0;
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new("Color").color(p.muted));
+            if ui.color_edit_button_srgb(&mut rgb).changed() {
+                app.set_scene(SceneConfig::Solid { color: Rgb(rgb) });
             }
-        }
-        SceneConfig::Solid { color } => {
-            let mut rgb = color.0;
+            ui.add_space(8.0);
+            for swatch in SWATCHES {
+                let (rect, response) = ui.allocate_exact_size(vec2(24.0, 24.0), Sense::click());
+                let fill = Color32::from_rgb(swatch[0], swatch[1], swatch[2]);
+                ui.painter().circle_filled(rect.center(), 10.0, fill);
+                let ring = if swatch == rgb { p.accent } else { p.border };
+                ui.painter()
+                    .circle_stroke(rect.center(), 11.5, Stroke::new(1.5, ring));
+                if response
+                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                    .clicked()
+                {
+                    app.set_scene(SceneConfig::Solid { color: Rgb(swatch) });
+                }
+            }
+        });
+        return;
+    }
+    playlist(app, ui);
+}
+
+/// The playlist: one row per item, the selected item's fit and zoom, how
+/// long each shows, and ways to add more.
+fn playlist(app: &mut App, ui: &mut egui::Ui) {
+    let p = Palette::of(ui.ctx());
+    let ctx = ui.ctx().clone();
+    let (mut items, mut secs) = app.playlist();
+    if items.is_empty() {
+        drop_zone(app, ui);
+        ui.add_space(10.0);
+        add_url_row(app, ui);
+        return;
+    }
+    app.selected_item = app.selected_item.min(items.len() - 1);
+
+    // Row actions are applied after the loop.
+    let mut action = None;
+    for (i, item) in items.iter().enumerate() {
+        let selected = i == app.selected_item;
+        let frame = egui::Frame::new()
+            .fill(if selected {
+                p.raised
+            } else {
+                Color32::TRANSPARENT
+            })
+            .stroke(Stroke::new(
+                1.0,
+                if selected {
+                    p.accent.gamma_multiply(0.5)
+                } else {
+                    p.border
+                },
+            ))
+            .corner_radius(8)
+            .inner_margin(egui::Margin::symmetric(10, 6));
+        let row = frame.show(ui, |ui| {
+            ui.set_width(ui.available_width());
             ui.horizontal(|ui| {
-                ui.label(egui::RichText::new("Color").color(p.muted));
-                if ui.color_edit_button_srgb(&mut rgb).changed() {
-                    app.set_scene(SceneConfig::Solid { color: Rgb(rgb) });
-                }
-                ui.add_space(8.0);
-                for swatch in SWATCHES {
-                    let (rect, response) = ui.allocate_exact_size(vec2(24.0, 24.0), Sense::click());
-                    let fill = Color32::from_rgb(swatch[0], swatch[1], swatch[2]);
-                    ui.painter().circle_filled(rect.center(), 10.0, fill);
-                    let ring = if swatch == rgb { p.accent } else { p.border };
-                    ui.painter()
-                        .circle_stroke(rect.center(), 11.5, Stroke::new(1.5, ring));
-                    if response
-                        .on_hover_cursor(egui::CursorIcon::PointingHand)
-                        .clicked()
-                    {
-                        app.set_scene(SceneConfig::Solid { color: Rgb(swatch) });
+                let kind = if item.url.is_some() {
+                    Icon::Link
+                } else if item
+                    .path
+                    .as_deref()
+                    .is_some_and(opencreative_render::media::is_video_path)
+                {
+                    Icon::Film
+                } else {
+                    Icon::Image
+                };
+                icons::show(ui, kind, 16.0, if selected { p.accent } else { p.muted });
+                ui.add(
+                    egui::Label::new(egui::RichText::new(item.label()).color(p.text)).truncate(),
+                );
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if icon_button(ui, Icon::Trash, "Take out of the playlist").clicked() {
+                        action = Some(RowAction::TakeOut(i));
                     }
-                }
+                    if i + 1 < items.len() && icon_button(ui, Icon::Down, "Move down").clicked() {
+                        action = Some(RowAction::Swap(i, i + 1));
+                    }
+                    if i > 0 && icon_button(ui, Icon::Up, "Move up").clicked() {
+                        action = Some(RowAction::Swap(i - 1, i));
+                    }
+                });
             });
+        });
+        let click = ui.interact(row.response.rect, ui.id().with(("item", i)), Sense::click());
+        if click
+            .on_hover_cursor(egui::CursorIcon::PointingHand)
+            .clicked()
+        {
+            app.selected_item = i;
         }
-        _ => {
-            drop_zone(app, ui);
+        ui.add_space(4.0);
+    }
+    match action {
+        Some(RowAction::TakeOut(i)) => {
+            items.remove(i);
+            if items.is_empty() {
+                return app.set_scene(SceneConfig::Solid {
+                    color: Rgb(SWATCHES[0]),
+                });
+            }
+            return app.set_playlist(items, secs, false);
+        }
+        Some(RowAction::Swap(a, b)) => {
+            items.swap(a, b);
+            app.selected_item = if app.selected_item == a { b } else { a };
+            return app.set_playlist(items, secs, false);
+        }
+        None => {}
+    }
+
+    ui.add_space(6.0);
+    ui.horizontal(|ui| {
+        let browsing = app.picking_file.is_some();
+        if ui
+            .add_enabled(!browsing, egui::Button::new("Add files…"))
+            .clicked()
+        {
+            app.browse_for_media(&ctx);
+        }
+        ui.label(
+            egui::RichText::new("or drop them on the window")
+                .small()
+                .color(p.faint),
+        );
+    });
+    ui.add_space(6.0);
+    add_url_row(app, ui);
+
+    // The selected item's fit and crop.
+    ui.add_space(12.0);
+    let selected = app.selected_item;
+    let item = &mut items[selected];
+    section(ui, &format!("“{}”", truncate(&item.label(), 40)));
+    let mut changed = false;
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new("Fit").color(p.muted));
+        changed |= segmented(
+            ui,
+            &mut item.fit,
+            &[
+                (FitConfig::Cover, "Fill"),
+                (FitConfig::Contain, "Fit"),
+                (FitConfig::Stretch, "Stretch"),
+            ],
+        );
+    });
+    let mut draft = false;
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new("Zoom").color(p.muted));
+        let zoom = ui.add(
+            egui::Slider::new(
+                &mut item.zoom,
+                1.0..=opencreative_render::media::Crop::MAX_ZOOM,
+            )
+            .logarithmic(true)
+            .custom_formatter(|v, _| format!("{v:.1}×")),
+        );
+        draft |= zoom.changed();
+        let cropped = (item.zoom - 1.0).abs() > f32::EPSILON || item.focus != [0.5, 0.5];
+        if cropped && ui.small_button("Reset").clicked() {
+            item.zoom = 1.0;
+            item.focus = [0.5, 0.5];
+            changed = true;
+        }
+    });
+    ui.label(
+        egui::RichText::new("Drag the preview to move the picture; scroll on it to zoom.")
+            .small()
+            .color(p.faint),
+    );
+    if items.len() > 1 {
+        ui.add_space(8.0);
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new("Each item shows for").color(p.muted));
+            draft |= ui
+                .add(
+                    egui::Slider::new(&mut secs, 2.0..=300.0)
+                        .logarithmic(true)
+                        .custom_formatter(|v, _| format!("{v:.0} s")),
+                )
+                .changed();
+        });
+    }
+    if changed {
+        app.set_playlist(items.clone(), secs, false);
+    } else if draft {
+        app.set_playlist(items.clone(), secs, true);
+    }
+    tool_notices(app, ui, &items);
+}
+
+enum RowAction {
+    TakeOut(usize),
+    Swap(usize, usize),
+}
+
+fn truncate(text: &str, max: usize) -> String {
+    if text.chars().count() <= max {
+        text.to_owned()
+    } else {
+        format!("{}…", text.chars().take(max - 1).collect::<String>())
+    }
+}
+
+/// A field for a YouTube (or direct video) address.
+fn add_url_row(app: &mut App, ui: &mut egui::Ui) {
+    ui.horizontal(|ui| {
+        let field = ui.add(
+            egui::TextEdit::singleline(&mut app.url_input)
+                .hint_text("YouTube or video link")
+                .desired_width((ui.available_width() - 100.0).max(160.0)),
+        );
+        let url = app.url_input.trim().to_owned();
+        let valid = url.starts_with("https://") || url.starts_with("http://");
+        let enter = field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+        let clicked = ui
+            .add_enabled(valid, egui::Button::new("Add link"))
+            .clicked();
+        if valid && (clicked || enter) {
+            app.add_url(url);
+            app.url_input.clear();
+        }
+    });
+}
+
+/// Explains missing helper programs for videos and web links.
+fn tool_notices(app: &mut App, ui: &mut egui::Ui, items: &[opencreative_config::MediaItem]) {
+    use opencreative_render::video::tool;
+    let p = Palette::of(ui.ctx());
+    let has_video = items.iter().any(|i| {
+        i.url.is_some()
+            || i.path
+                .as_deref()
+                .is_some_and(opencreative_render::media::is_video_path)
+    });
+    let has_url = items.iter().any(|i| i.url.is_some());
+    let notice = |ui: &mut egui::Ui, text: &str| {
+        ui.add_space(10.0);
+        ui.horizontal_wrapped(|ui| {
+            icons::show(ui, Icon::Help, 15.0, p.warn);
+            ui.label(egui::RichText::new(text).color(p.muted));
+        });
+    };
+    if has_video && tool("ffmpeg").is_none() {
+        notice(
+            ui,
+            "Videos need ffmpeg. Install it with `sudo apt install ffmpeg` (or your \
+             distribution's package manager).",
+        );
+        if ui.small_button("Copy command").clicked() {
+            ui.ctx().copy_text("sudo apt install ffmpeg".to_owned());
+            app.notify("Command copied.");
+        }
+    }
+    if has_url && tool("yt-dlp").is_none() {
+        notice(
+            ui,
+            "YouTube links need yt-dlp. OpenCreative can download the current release \
+             for you (about 3 MB, into its own folder).",
+        );
+        let busy = app.task.is_some();
+        if ui
+            .add_enabled(!busy, egui::Button::new("Download yt-dlp"))
+            .clicked()
+        {
+            let ctx = ui.ctx().clone();
+            app.run_task(&ctx, "Downloading yt-dlp", crate::service::download_ytdlp);
         }
     }
 }
@@ -652,13 +917,15 @@ fn drop_zone(app: &mut App, ui: &mut egui::Ui) {
             ui.vertical_centered(|ui| {
                 icons::show(ui, Icon::Upload, 26.0, p.accent);
                 ui.label(
-                    egui::RichText::new("Drop an image or GIF anywhere on this window")
+                    egui::RichText::new("Drop images, GIFs or videos anywhere on this window")
                         .color(p.text),
                 );
                 ui.label(
-                    egui::RichText::new("PNG, JPEG, WebP, BMP or animated GIF")
-                        .small()
-                        .color(p.muted),
+                    egui::RichText::new(
+                        "PNG, JPEG, WebP, BMP, GIF, MP4, WebM, MKV… Several play one after another.",
+                    )
+                    .small()
+                    .color(p.muted),
                 );
                 ui.add_space(4.0);
                 let browsing = app.picking_file.is_some();
@@ -666,7 +933,7 @@ fn drop_zone(app: &mut App, ui: &mut egui::Ui) {
                     .add_enabled(!browsing, egui::Button::new("Browse…"))
                     .clicked()
                 {
-                    app.browse_for_image(&ctx);
+                    app.browse_for_media(&ctx);
                 }
             });
         });

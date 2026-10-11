@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand, ValueEnum};
-use opencreative_config::{FitConfig, Metric, Rgb, SceneConfig, SkinConfig};
+use opencreative_config::{FitConfig, MediaItem, Metric, Rgb, SceneConfig, SkinConfig};
 use opencreative_core::{Player, Scene};
 use opencreative_device as device;
 use opencreative_ipc::{self as ipc, Request, Response};
@@ -64,11 +64,24 @@ enum Command {
     },
     /// Fill the screen with one color, e.g. `#ff8800`.
     Solid { color: Rgb },
-    /// Show an image. Animated GIFs loop until interrupted.
-    Image {
-        path: PathBuf,
+    /// Show images, GIFs or videos (files or web addresses, e.g. YouTube),
+    /// one after another. Videos need ffmpeg; web pages need yt-dlp.
+    #[command(visible_alias = "image")]
+    Media {
+        /// Files or http(s) addresses, played in order.
+        #[arg(required = true)]
+        sources: Vec<String>,
         #[arg(long, value_enum, default_value_t = FitArg::Cover)]
         fit: FitArg,
+        /// Zoom in: 1 shows everything, 2 half the width and height.
+        #[arg(long, default_value_t = 1.0)]
+        zoom: f32,
+        /// The point to zoom in on, as fractions: `0.5,0.5` is the middle.
+        #[arg(long, value_parser = parse_focus, default_value = "0.5,0.5")]
+        focus: [f32; 2],
+        /// Seconds per item when there are several.
+        #[arg(long, default_value_t = 10.0)]
+        seconds: f64,
     },
     /// Show chosen readings in outlined panels: one large, two small.
     Panels {
@@ -227,9 +240,9 @@ fn run_direct(command: Command, serial: Option<&str>, rotation: Rotation) -> Res
             Ok(device::open(serial)?.set_brightness(level)?)
         }
         Command::Solid { color } => play(Scene::Solid(color.0), serial, rotation),
-        Command::Image { path, fit } => {
-            let fit = fit.into();
-            play(Scene::Media { path, fit }, serial, rotation)
+        media @ Command::Media { .. } => {
+            let scene = media_scene(&media)?;
+            play(scene.to_scene()?, serial, rotation)
         }
         Command::Monitor { interval } => {
             let interval = interval_from_secs(interval)?;
@@ -283,19 +296,9 @@ fn send_to_daemon(
         Command::Solid { color } => Request::SetScene {
             scene: SceneConfig::Solid { color },
         },
-        Command::Image { path, fit } => {
-            // Fail here, not silently in the daemon, if the file won't load.
-            let (w, h) = default_logical_size(Rotation::R0);
-            media::load(&path, w, h, fit.into())
-                .with_context(|| format!("loading {}", path.display()))?;
-            // The daemon has its own working directory.
-            let path =
-                fs::canonicalize(&path).with_context(|| format!("resolving {}", path.display()))?;
-            let fit = fit.into();
-            Request::SetScene {
-                scene: SceneConfig::Image { path, fit },
-            }
-        }
+        media @ Command::Media { .. } => Request::SetScene {
+            scene: media_scene(&media)?,
+        },
         Command::Panels {
             skin,
             primary,
@@ -423,6 +426,54 @@ fn sensors() -> Result<()> {
     Ok(())
 }
 
+/// The playlist a `media` command asks for, with files made absolute (the
+/// daemon has its own working directory) and checked to exist.
+fn media_scene(command: &Command) -> Result<SceneConfig> {
+    let Command::Media {
+        sources,
+        fit,
+        zoom,
+        focus,
+        seconds,
+    } = command
+    else {
+        unreachable!("only called for `media`");
+    };
+    let items = sources
+        .iter()
+        .map(|source| {
+            let mut item = if source.starts_with("http://") || source.starts_with("https://") {
+                MediaItem::web(source.clone())
+            } else {
+                let path = fs::canonicalize(source).with_context(|| format!("opening {source}"))?;
+                MediaItem::file(path)
+            };
+            item.fit = (*fit).into();
+            item.zoom = *zoom;
+            item.focus = *focus;
+            Ok(item)
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let scene = SceneConfig::Media {
+        items,
+        item_secs: *seconds,
+    };
+    scene.to_scene()?;
+    Ok(scene)
+}
+
+fn parse_focus(s: &str) -> Result<[f32; 2], String> {
+    let (x, y) = s.split_once(',').ok_or("expected x,y like 0.5,0.5")?;
+    let parse = |v: &str| {
+        v.trim()
+            .parse::<f32>()
+            .ok()
+            .filter(|v| (0.0..=1.0).contains(v))
+            .ok_or_else(|| format!("{v} is not a fraction between 0 and 1"))
+    };
+    Ok([parse(x)?, parse(y)?])
+}
+
 /// Render size for the first supported model, used when no device is open.
 fn default_logical_size(rotation: Rotation) -> (u32, u32) {
     let spec = &device::SUPPORTED[0];
@@ -447,7 +498,7 @@ fn preview(what: PreviewWhat, output: &Path, rotation: Rotation) -> Result<()> {
             monitor::render(&sensors.read(), &clock, w, h)
         }
         PreviewWhat::Image { path, fit } => {
-            media::load(&path, w, h, fit.into())
+            media::load(&path, w, h, fit.into(), media::Crop::default())
                 .with_context(|| format!("loading {}", path.display()))?
                 .into_iter()
                 .next()

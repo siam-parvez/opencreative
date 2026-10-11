@@ -18,7 +18,7 @@ use std::time::Duration;
 
 use opencreative_core::Scene;
 use opencreative_render::Rotation;
-use opencreative_render::media::Fit;
+use opencreative_render::media::{Crop, Fit, Item, Source};
 use opencreative_render::panels::{Layout, Skin};
 pub use opencreative_sensors::Metric;
 use serde::{Deserialize, Serialize};
@@ -47,6 +47,10 @@ pub enum InvalidValue {
     Brightness(u8),
     #[error("interval must be a positive number of seconds, not {0}")]
     Interval(f64),
+    #[error("a playlist item needs a `path` or an http(s) `url`, not both: {0}")]
+    MediaSource(String),
+    #[error("zoom must be between 1 and 8, not {0}")]
+    Zoom(f32),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -96,10 +100,19 @@ pub enum SceneConfig {
         #[serde(default = "default_interval")]
         interval_secs: f64,
     },
+    /// One image or GIF. Still read from older config files; the app now
+    /// writes [`SceneConfig::Media`].
     Image {
         path: PathBuf,
         #[serde(default)]
         fit: FitConfig,
+    },
+    /// A playlist of images, GIFs and videos (files or web addresses).
+    Media {
+        items: Vec<MediaItem>,
+        /// How long each item shows before the next, when there are several.
+        #[serde(default = "default_item_secs")]
+        item_secs: f64,
     },
     Solid {
         color: Rgb,
@@ -108,6 +121,106 @@ pub enum SceneConfig {
 
 fn default_interval() -> f64 {
     1.0
+}
+
+fn default_item_secs() -> f64 {
+    10.0
+}
+
+/// A playlist entry: a file or a web address, with how to fit and crop it.
+///
+/// ```toml
+/// [[scene.items]]
+/// path = "/home/me/cat.gif"
+/// fit = "cover"
+/// zoom = 1.5
+/// focus = [0.5, 0.3]
+/// ```
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MediaItem {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    #[serde(default)]
+    pub fit: FitConfig,
+    /// 1 shows the whole fitted picture; 2 shows half of it, and so on.
+    #[serde(default = "one", skip_serializing_if = "is_one")]
+    pub zoom: f32,
+    /// The point to zoom in on, as fractions of the width and height.
+    #[serde(default = "middle", skip_serializing_if = "is_middle")]
+    pub focus: [f32; 2],
+}
+
+fn one() -> f32 {
+    1.0
+}
+
+fn is_one(v: &f32) -> bool {
+    *v == 1.0
+}
+
+fn middle() -> [f32; 2] {
+    [0.5, 0.5]
+}
+
+fn is_middle(v: &[f32; 2]) -> bool {
+    *v == [0.5, 0.5]
+}
+
+impl MediaItem {
+    pub fn file(path: PathBuf) -> Self {
+        Self {
+            path: Some(path),
+            url: None,
+            fit: FitConfig::default(),
+            zoom: 1.0,
+            focus: middle(),
+        }
+    }
+
+    pub fn web(url: String) -> Self {
+        Self {
+            path: None,
+            url: Some(url),
+            ..Self::file(PathBuf::new())
+        }
+    }
+
+    /// A short name for lists: the file name, or the address.
+    pub fn label(&self) -> String {
+        match (&self.path, &self.url) {
+            (Some(path), _) => path.file_name().map_or_else(
+                || path.display().to_string(),
+                |f| f.to_string_lossy().into_owned(),
+            ),
+            (None, Some(url)) => url.clone(),
+            (None, None) => "(nothing)".to_owned(),
+        }
+    }
+
+    pub fn to_item(&self) -> std::result::Result<Item, InvalidValue> {
+        let source = match (&self.path, &self.url) {
+            (Some(path), None) => Source::Path(path.clone()),
+            (None, Some(url)) if url.starts_with("http://") || url.starts_with("https://") => {
+                Source::Url(url.clone())
+            }
+            _ => return Err(InvalidValue::MediaSource(self.label())),
+        };
+        if !(1.0..=Crop::MAX_ZOOM).contains(&self.zoom) {
+            return Err(InvalidValue::Zoom(self.zoom));
+        }
+        Ok(Item {
+            source,
+            fit: self.fit.into(),
+            crop: Crop {
+                zoom: self.zoom,
+                x: self.focus[0].clamp(0.0, 1.0),
+                y: self.focus[1].clamp(0.0, 1.0),
+            },
+        })
+    }
 }
 
 impl Default for SceneConfig {
@@ -148,8 +261,19 @@ impl SceneConfig {
                 interval: interval(*interval_secs)?,
             },
             Self::Image { path, fit } => Scene::Media {
-                path: path.clone(),
-                fit: (*fit).into(),
+                items: vec![Item {
+                    source: Source::Path(path.clone()),
+                    fit: (*fit).into(),
+                    crop: Crop::default(),
+                }],
+                item_time: Duration::from_secs(10),
+            },
+            Self::Media { items, item_secs } => Scene::Media {
+                items: items
+                    .iter()
+                    .map(MediaItem::to_item)
+                    .collect::<std::result::Result<_, _>>()?,
+                item_time: interval(*item_secs)?,
             },
             Self::Solid { color } => Scene::Solid(color.0),
         })
@@ -331,10 +455,70 @@ mod tests {
         assert_eq!(
             config.scene.to_scene().unwrap(),
             Scene::Media {
-                path: "/tmp/a.gif".into(),
-                fit: Fit::Contain
+                items: vec![Item {
+                    source: Source::Path("/tmp/a.gif".into()),
+                    fit: Fit::Contain,
+                    crop: Crop::default(),
+                }],
+                item_time: Duration::from_secs(10),
             }
         );
+    }
+
+    #[test]
+    fn playlists_parse_and_old_image_scenes_still_load() {
+        let text = r#"
+            [scene]
+            type = "media"
+            item_secs = 5.0
+
+            [[scene.items]]
+            path = "/tmp/cat.gif"
+            zoom = 2.0
+            focus = [0.25, 0.5]
+
+            [[scene.items]]
+            url = "https://www.youtube.com/watch?v=x"
+            fit = "contain"
+        "#;
+        let config: Config = toml::from_str(text).unwrap();
+        let Scene::Media { items, item_time } = config.scene.to_scene().unwrap() else {
+            panic!("expected media");
+        };
+        assert_eq!(item_time, Duration::from_secs(5));
+        assert_eq!(items[0].crop.zoom, 2.0);
+        assert_eq!(items[0].crop.x, 0.25);
+        assert!(matches!(items[1].source, Source::Url(_)));
+        assert_eq!(items[1].fit, Fit::Contain);
+
+        // Defaults stay out of the file.
+        let saved = toml::to_string(&SceneConfig::Media {
+            items: vec![MediaItem::file("/tmp/a.png".into())],
+            item_secs: 10.0,
+        })
+        .unwrap();
+        assert!(
+            !saved.contains("zoom") && !saved.contains("focus"),
+            "{saved}"
+        );
+
+        let old: Config =
+            toml::from_str("[scene]\ntype = \"image\"\npath = \"/tmp/a.png\"").unwrap();
+        assert!(matches!(old.scene.to_scene().unwrap(), Scene::Media { .. }));
+
+        let bad = |item: MediaItem| {
+            SceneConfig::Media {
+                items: vec![item],
+                item_secs: 10.0,
+            }
+            .to_scene()
+            .is_err()
+        };
+        assert!(bad(MediaItem::web("file:///etc/passwd".into())));
+        assert!(bad(MediaItem {
+            zoom: 9.0,
+            ..MediaItem::file("/tmp/a.png".into())
+        }));
     }
 
     #[test]

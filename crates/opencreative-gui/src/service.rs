@@ -211,6 +211,35 @@ pub fn uninstall(purge: bool) -> Result<()> {
     }
 }
 
+/// The official yt-dlp release (a single file that runs with Python 3).
+const YTDLP_URL: &str = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp";
+
+/// Downloads yt-dlp into OpenCreative's tools folder, where video playback
+/// looks for it. Distribution packages of yt-dlp are often too old for
+/// YouTube, so the app offers the current release.
+pub fn download_ytdlp() -> Result<()> {
+    use std::io::Read as _;
+    use std::os::unix::fs::PermissionsExt as _;
+    let dir = opencreative_render::video::tools_dir().ok_or("no data directory")?;
+    let mut response = ureq::get(YTDLP_URL)
+        .call()
+        .map_err(|e| format!("downloading yt-dlp: {e}"))?;
+    let mut bytes = Vec::new();
+    response
+        .body_mut()
+        .as_reader()
+        .take(64 << 20)
+        .read_to_end(&mut bytes)
+        .map_err(|e| format!("downloading yt-dlp: {e}"))?;
+    // A Python zip app starts with a shebang line.
+    if !bytes.starts_with(b"#!") {
+        return Err("the download wasn't yt-dlp".to_owned());
+    }
+    let path = dir.join("yt-dlp");
+    write(&path, &bytes)?;
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).map_err(|e| e.to_string())
+}
+
 /// Runs a shell script as root through polkit's password prompt.
 fn as_root(script: &str) -> Result<()> {
     let out = Command::new("pkexec")
