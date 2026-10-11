@@ -14,7 +14,7 @@ use opencreative_ipc::{self as ipc, Request, Response};
 use opencreative_render::media::{self, Fit};
 use opencreative_render::panels::Layout;
 use opencreative_render::{Rotation, monitor, rotate};
-use opencreative_sensors::Sensors;
+use opencreative_sensors::{ClaudeStatus, Sensors};
 
 #[derive(Parser)]
 #[command(
@@ -384,10 +384,22 @@ fn list() -> Result<()> {
 
 fn sensors() -> Result<()> {
     let mut sensors = Sensors::new();
+    opencreative_sensors::set_claude_enabled(true);
     sensors.read();
     thread::sleep(Duration::from_millis(500));
+    // Give the first Claude usage request a moment to finish.
+    for _ in 0..20 {
+        if opencreative_sensors::claude_status() != ClaudeStatus::Off {
+            break;
+        }
+        thread::sleep(Duration::from_millis(250));
+    }
     let snap = sensors.read();
     println!("{snap:#?}");
+    println!(
+        "\nClaude usage: {:?}",
+        opencreative_sensors::claude_status()
+    );
     println!("\nTemperature sensors:");
     for (label, temp) in sensors.all_temperatures() {
         match temp {

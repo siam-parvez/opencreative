@@ -10,7 +10,10 @@ use tiny_skia::{FillRule, Paint, PathBuilder, Pixmap, Stroke, Transform};
 
 use crate::monitor::rgb;
 
-use super::{Layout, accent, chip_icon, crisp_width, fill_rect, level, snap};
+use super::{
+    CLAUDE, Layout, accent, crisp_width, fill_rect, level, metric_icon, shows_claude, snap,
+    spark_icon,
+};
 use crate::text::{self, Align, Weight};
 
 const DESIGN_W: f32 = 320.0;
@@ -27,6 +30,7 @@ const FAINT_LINE: [u8; 3] = [0x50, 0x54, 0x58];
 const VALUE: [u8; 3] = [0xf8, 0xfc, 0xf8];
 const LABEL: [u8; 3] = [0xc8, 0xcc, 0xd0];
 const MUTED: [u8; 3] = [0x70, 0x74, 0x78];
+const DETAIL: [u8; 3] = [0x98, 0x9c, 0xa0];
 const METER_OFF: [u8; 3] = [0x38, 0x3c, 0x40];
 
 /// An axis-aligned box in design space.
@@ -87,6 +91,9 @@ pub(super) fn render(snap: &Snapshot, layout: &Layout, width: u32, height: u32) 
     tiles(&mut pm);
     let space = Space::new(width, height);
     frame(&mut pm, space);
+    if shows_claude(layout) {
+        claude_badge(&mut pm, space);
+    }
 
     let primary = space.area(PRIMARY);
     reading(
@@ -252,11 +259,13 @@ enum Size {
 
 impl Size {
     /// (value font size in design units, value center and label center as
-    /// fractions of the area height).
-    fn metrics(self) -> (f32, f32, f32) {
+    /// fractions of the area height). A detail line under the label moves
+    /// the low reading up to make room.
+    fn metrics(self, detail: bool) -> (f32, f32, f32) {
         match self {
             Size::Large => (70.0, 0.45, 0.71),
             Size::Small => (40.0, 0.42, 0.76),
+            Size::SmallLow if detail => (40.0, 0.4, 0.72),
             Size::SmallLow => (40.0, 0.52, 0.88),
         }
     }
@@ -278,7 +287,8 @@ fn reading(
     scale: f32,
     size: Size,
 ) {
-    let (value_size, value_at, label_at) = size.metrics();
+    let detail = metric.detail(snap);
+    let (value_size, value_at, label_at) = size.metrics(detail.is_some());
     let h = bottom - top;
     let x = left + size.inset() * scale;
     let reading = metric.read(snap);
@@ -336,7 +346,7 @@ fn reading(
     } * scale;
     let ly = top + h * label_at;
     let icon = label_size * 1.05;
-    chip_icon(pm, x + icon / 2.0 + scale, ly, icon, accent(metric));
+    metric_icon(pm, metric, x + icon / 2.0 + scale, ly, icon);
     text::draw(
         pm,
         metric.label(),
@@ -347,6 +357,38 @@ fn reading(
         Align::Left,
         LABEL,
     );
+    if let Some(detail) = detail {
+        text::draw(
+            pm,
+            &detail,
+            x + icon + 6.0 * scale,
+            ly + label_size * 1.3,
+            label_size * 0.82,
+            Weight::SemiBold,
+            Align::Left,
+            DETAIL,
+        );
+    }
+}
+
+/// Claude's mark and name in the free strip above the primary area, when a
+/// Claude limit is on screen. Portrait has room for the mark only.
+fn claude_badge(pm: &mut Pixmap, space: Space) {
+    let (x, y) = space.point(24.0, 15.0);
+    let size = 11.0 * space.scale;
+    spark_icon(pm, x, y, size, CLAUDE);
+    if !space.portrait {
+        text::draw(
+            pm,
+            "Claude",
+            x + size * 0.8,
+            y,
+            11.0 * space.scale,
+            Weight::SemiBold,
+            Align::Left,
+            CLAUDE,
+        );
+    }
 }
 
 /// Five stacked squares beside the large reading, lit from the bottom.

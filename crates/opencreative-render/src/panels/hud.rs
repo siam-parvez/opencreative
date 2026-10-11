@@ -7,7 +7,9 @@ use tiny_skia::{
     Stroke, Transform,
 };
 
-use super::{Layout, accent, chip_icon, crisp_width, fill_rect, level, snap};
+use super::{
+    CLAUDE, Layout, chip_icon, crisp_width, fill_rect, level, metric_icon, snap, spark_icon,
+};
 use crate::monitor::rgb;
 use crate::text::{self, Align, Weight};
 
@@ -218,8 +220,24 @@ fn main_block(pm: &mut Pixmap, snap: &Snapshot, metric: Metric, r: Area) {
         }
     }
 
+    // The header icon: a chip, or Claude's mark and name for its limits.
     let (icon_x, icon_y) = p(0.36, 0.075);
-    chip_icon(pm, icon_x, icon_y, r.h() * 0.075, CYAN);
+    if metric.is_claude() {
+        let size = r.h() * 0.08;
+        spark_icon(pm, icon_x - size, icon_y, size, CLAUDE);
+        text::draw(
+            pm,
+            "Claude",
+            icon_x - size * 0.35,
+            icon_y,
+            r.h() * 0.06,
+            Weight::SemiBold,
+            Align::Left,
+            CLAUDE,
+        );
+    } else {
+        chip_icon(pm, icon_x, icon_y, r.h() * 0.075, CYAN);
+    }
 
     // A small bracket inside the panel's top-left corner.
     let b = r.h() * 0.05;
@@ -290,6 +308,18 @@ fn main_block(pm: &mut Pixmap, snap: &Snapshot, metric: Metric, r: Area) {
         Align::Center,
         TEXT,
     );
+    if let Some(detail) = metric.detail(snap) {
+        text::draw(
+            pm,
+            &detail,
+            cx,
+            p(0.0, 0.88).1,
+            r.h() * 0.05,
+            Weight::SemiBold,
+            Align::Center,
+            MUTED,
+        );
+    }
 }
 
 /// Upload and download speeds over a chart of recent traffic.
@@ -344,7 +374,7 @@ fn secondary(pm: &mut Pixmap, snap: &Snapshot, history: &[Snapshot], metric: Met
     let icon = label_size * 1.1;
     let start = cx - (icon + 5.0 + label_w) / 2.0;
     let ly = r.y0 + r.h() * 0.08;
-    chip_icon(pm, start + icon / 2.0, ly, icon, accent(metric));
+    metric_icon(pm, metric, start + icon / 2.0, ly, icon);
     text::draw(
         pm,
         metric.label(),
@@ -371,9 +401,14 @@ fn secondary(pm: &mut Pixmap, snap: &Snapshot, history: &[Snapshot], metric: Met
         Align::Center,
         color,
     );
+    // The unit, followed by the time to reset for Claude limits.
+    let unit = match metric.detail(snap) {
+        Some(detail) => format!("{}  {detail}", reading.unit),
+        None => reading.unit.to_owned(),
+    };
     text::draw(
         pm,
-        reading.unit,
+        &unit,
         cx,
         r.y0 + r.h() * 0.49,
         r.h() * 0.075,

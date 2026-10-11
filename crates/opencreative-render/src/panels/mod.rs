@@ -76,6 +76,52 @@ fn accent(metric: Metric) -> [u8; 3] {
     }
 }
 
+/// The icon beside a reading's label: Claude's spark for its limits, a
+/// chip in the reading's color for everything else.
+fn metric_icon(pm: &mut Pixmap, metric: Metric, cx: f32, cy: f32, size: f32) {
+    if metric.is_claude() {
+        spark_icon(pm, cx, cy, size * 1.1, CLAUDE);
+    } else {
+        chip_icon(pm, cx, cy, size, accent(metric));
+    }
+}
+
+/// Whether any shown reading is a Claude limit.
+fn shows_claude(layout: &Layout) -> bool {
+    layout.primary.is_claude() || layout.secondary.iter().any(|m| m.is_claude())
+}
+
+/// Claude's mark: tapered rays of uneven length around a small hub.
+fn spark_icon(pm: &mut Pixmap, cx: f32, cy: f32, size: f32, color: [u8; 3]) {
+    const RAYS: [f32; 12] = [
+        1.0, 0.78, 0.92, 0.7, 0.96, 0.8, 1.0, 0.74, 0.9, 0.82, 0.94, 0.72,
+    ];
+    let r = size / 2.0;
+    let mut pb = PathBuilder::new();
+    for (i, len) in RAYS.iter().enumerate() {
+        let a = i as f32 * std::f32::consts::TAU / RAYS.len() as f32 - std::f32::consts::FRAC_PI_2;
+        let (dx, dy) = (a.cos(), a.sin());
+        let w = 0.1 * r;
+        let base = 0.12 * r;
+        pb.move_to(cx + dx * base - dy * w, cy + dy * base + dx * w);
+        pb.line_to(cx + dx * r * len, cy + dy * r * len);
+        pb.line_to(cx + dx * base + dy * w, cy + dy * base - dx * w);
+        pb.close();
+    }
+    pb.push_circle(cx, cy, 0.16 * r);
+    let Some(path) = pb.finish() else { return };
+    let mut paint = Paint::default();
+    paint.set_color(rgb(color));
+    paint.anti_alias = true;
+    pm.fill_path(
+        &path,
+        &paint,
+        tiny_skia::FillRule::Winding,
+        Transform::identity(),
+        None,
+    );
+}
+
 /// A processor chip: an outlined square with pins and a solid core.
 fn chip_icon(pm: &mut Pixmap, cx: f32, cy: f32, size: f32, color: [u8; 3]) {
     let body = size * 0.62;

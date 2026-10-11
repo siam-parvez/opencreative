@@ -1,6 +1,7 @@
 //! Settings: background service, USB access, app menu, appearance, about.
 
 use eframe::egui;
+use opencreative_sensors::ClaudeStatus;
 
 use crate::pages::{header, setting_row};
 use crate::prefs::Appearance;
@@ -117,18 +118,22 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     }
 
     group(ui, "Integrations", |ui| {
-        let detected = app.history.latest().is_some_and(|s| s.claude.is_some());
-        let status = if detected {
-            "OpenCUT detected."
-        } else {
-            "OpenCUT isn't running (start its ocutd service)."
+        let status = match opencreative_sensors::claude_status() {
+            ClaudeStatus::Off => "",
+            ClaudeStatus::Ok => " Connected.",
+            ClaudeStatus::NotSignedIn => " Sign in to Claude Code on this computer first.",
+            ClaudeStatus::Expired => {
+                " Your Claude Code login expired; run `claude` once to renew it."
+            }
+            ClaudeStatus::Unreachable => " Can't reach Anthropic right now; retrying.",
         };
         setting_row(
             ui,
             "Claude usage",
             &format!(
-                "Shows your Claude plan usage (5-hour and weekly) from OpenCUT on the \
-                 dashboard and as readings for the cooler screen. {status}"
+                "Shows your 5-hour and weekly Claude limits on the dashboard and the cooler \
+                 screen, using the login Claude Code keeps on this computer. Checked every \
+                 90 seconds; your login is only sent to Anthropic.{status}"
             ),
             |ui| {
                 let mut on = app.prefs.claude_usage;

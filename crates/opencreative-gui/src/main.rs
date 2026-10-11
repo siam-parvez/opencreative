@@ -910,6 +910,7 @@ impl eframe::App for App {
             self.scan_devices();
             ctx.request_repaint_after(DEVICE_SCAN);
         }
+        opencreative_sensors::set_claude_enabled(self.prefs.claude_usage);
         let until_sample = self.history.tick();
         let until_poll = self.next_poll.saturating_duration_since(Instant::now());
         ctx.request_repaint_after(until_sample.min(until_poll));

@@ -17,10 +17,10 @@ pub enum Metric {
     GpuPower,
     RamUsage,
     RamUsed,
-    /// Claude 5-hour session usage (via OpenCUT).
+    /// Claude's 5-hour limit, used percent.
     #[serde(rename = "claude_5h")]
     ClaudeSession,
-    /// Claude weekly usage (via OpenCUT).
+    /// Claude's weekly limit, used percent.
     #[serde(rename = "claude_week")]
     ClaudeWeekly,
 }
@@ -84,8 +84,8 @@ impl Metric {
             Metric::GpuPower => "GPU POWER",
             Metric::RamUsage => "RAM USAGE",
             Metric::RamUsed => "RAM USED",
-            Metric::ClaudeSession => "CLAUDE 5H",
-            Metric::ClaudeWeekly => "CLAUDE WEEK",
+            Metric::ClaudeSession => "5H LIMIT",
+            Metric::ClaudeWeekly => "WEEKLY LIMIT",
         }
     }
 
@@ -102,9 +102,20 @@ impl Metric {
             Metric::GpuPower => "GPU power",
             Metric::RamUsage => "RAM usage",
             Metric::RamUsed => "RAM used",
-            Metric::ClaudeSession => "Claude 5-hour usage",
-            Metric::ClaudeWeekly => "Claude weekly usage",
+            Metric::ClaudeSession => "Claude 5-hour limit",
+            Metric::ClaudeWeekly => "Claude weekly limit",
         }
+    }
+
+    /// A second line under the label, e.g. `RESETS 4H 23M` for Claude limits.
+    pub fn detail(self, s: &Snapshot) -> Option<String> {
+        let window = match self {
+            Metric::ClaudeSession => s.claude?.session?,
+            Metric::ClaudeWeekly => s.claude?.weekly?,
+            _ => return None,
+        };
+        let secs = window.resets_in_secs?;
+        Some(format!("RESETS {}", countdown(secs).to_uppercase()))
     }
 
     pub fn read(self, s: &Snapshot) -> Reading {
@@ -127,6 +138,18 @@ impl Metric {
             Metric::ClaudeSession => r(s.claude.and_then(|c| c.session).map(|w| one(w.pct)), "%"),
             Metric::ClaudeWeekly => r(s.claude.and_then(|c| c.weekly).map(|w| one(w.pct)), "%"),
         }
+    }
+}
+
+/// Time left in a short form: `5d 22h`, `4h 23m` or `5m`.
+pub fn countdown(secs: u64) -> String {
+    let (d, h, m) = (secs / 86_400, secs / 3600 % 24, secs / 60 % 60);
+    if d > 0 {
+        format!("{d}d {h}h")
+    } else if h > 0 {
+        format!("{h}h {m}m")
+    } else {
+        format!("{m}m")
     }
 }
 
@@ -184,6 +207,32 @@ mod tests {
         assert_eq!(Metric::RamUsed.read(&s).value.as_deref(), Some("19.6"));
         assert_eq!(Metric::GpuTemp.read(&s).value, None);
         assert_eq!(Metric::GpuFreq.read(&s).value, None);
+    }
+
+    #[test]
+    fn claude_limits_show_time_to_reset() {
+        let window = |pct, resets_in_secs| {
+            Some(crate::ClaudeWindow {
+                pct,
+                resets_in_secs,
+            })
+        };
+        let s = Snapshot {
+            claude: Some(crate::ClaudeUsage {
+                session: window(8.0, Some(15794)),
+                weekly: window(58.0, None),
+            }),
+            ..Snapshot::default()
+        };
+        assert_eq!(Metric::ClaudeSession.read(&s).value.as_deref(), Some("8"));
+        assert_eq!(
+            Metric::ClaudeSession.detail(&s).as_deref(),
+            Some("RESETS 4H 23M")
+        );
+        assert_eq!(Metric::ClaudeWeekly.detail(&s), None);
+        assert_eq!(Metric::CpuTemp.detail(&s), None);
+        assert_eq!(countdown(513794), "5d 22h");
+        assert_eq!(countdown(300), "5m");
     }
 
     #[test]

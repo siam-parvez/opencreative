@@ -92,6 +92,8 @@ pub struct Player {
     cursor: usize,
     /// Recent readings, oldest first, for skins that chart them.
     history: VecDeque<opencreative_sensors::Snapshot>,
+    /// Whether this player turned Claude usage polling on.
+    claude_on: bool,
 }
 
 /// How many readings a chart covers (a minute at the default rate).
@@ -107,6 +109,15 @@ impl Player {
             media: None,
             cursor: 0,
             history: VecDeque::with_capacity(HISTORY),
+            claude_on: false,
+        }
+    }
+
+    /// Polls Claude usage only while a shown reading needs it.
+    fn want_claude(&mut self, on: bool) {
+        if on != self.claude_on {
+            opencreative_sensors::set_claude_enabled(on);
+            self.claude_on = on;
         }
     }
 
@@ -121,6 +132,13 @@ impl Player {
     /// Renders the next frame for a `panel_w` x `panel_h` panel.
     pub fn next(&mut self, panel_w: u32, panel_h: u32) -> Result<Output> {
         let (w, h) = self.rotation.logical_size(panel_w, panel_h);
+        let claude = match &self.scene {
+            Scene::Panels { layout, .. } => {
+                layout.primary.is_claude() || layout.secondary.iter().any(|m| m.is_claude())
+            }
+            _ => false,
+        };
+        self.want_claude(claude);
         match &self.scene {
             Scene::Monitor { interval } => {
                 let snap = self.sensors.get_or_insert_with(Sensors::new).read();
@@ -233,6 +251,12 @@ pub fn run(player: &mut Player, serial: Option<&str>) -> Result<()> {
             None => return Ok(()),
             Some(hold) => thread::sleep(hold.saturating_sub(started.elapsed())),
         }
+    }
+}
+
+impl Drop for Player {
+    fn drop(&mut self) {
+        self.want_claude(false);
     }
 }
 

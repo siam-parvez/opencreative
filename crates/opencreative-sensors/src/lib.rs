@@ -16,9 +16,12 @@ use sysinfo::{
     System,
 };
 
-pub use claude::{ClaudeUsage, Window as ClaudeWindow};
+pub use claude::{
+    ClaudeUsage, Status as ClaudeStatus, Window as ClaudeWindow, set_enabled as set_claude_enabled,
+    status as claude_status,
+};
 pub use gpu::Gpu;
-pub use metric::{Metric, Reading};
+pub use metric::{Metric, Reading, countdown};
 
 /// One reading of everything the screen and dashboard may display.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -38,7 +41,7 @@ pub struct Snapshot {
     pub disk_write_bps: f64,
     pub net_rx_bps: f64,
     pub net_tx_bps: f64,
-    /// Claude plan usage from OpenCUT, when it is running.
+    /// Claude plan usage, when turned on with [`set_claude_enabled`].
     pub claude: Option<ClaudeUsage>,
 }
 

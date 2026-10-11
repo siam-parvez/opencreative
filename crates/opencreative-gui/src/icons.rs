@@ -4,6 +4,9 @@ use std::f32::consts::{FRAC_PI_2, PI, TAU};
 
 use eframe::egui::{self, Color32, Painter, Pos2, Rect, Sense, Stroke, Vec2, pos2, vec2};
 
+/// Claude's coral, for its mark and usage bars.
+pub const CLAUDE: Color32 = Color32::from_rgb(0xd9, 0x77, 0x57);
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Icon {
     Dashboard,
@@ -19,6 +22,7 @@ pub enum Icon {
     Down,
     Rotate,
     Help,
+    Claude,
 }
 
 /// Allocates a `size` square and paints the icon in it.
@@ -137,6 +141,28 @@ pub fn paint(painter: &Painter, rect: Rect, icon: Icon, color: Color32) {
             let tip = p(0.0, -0.65);
             line(tip, p(-0.28, -0.88));
             line(tip, p(-0.28, -0.42));
+        }
+        Icon::Claude => {
+            // A spark: tapered rays of uneven length around a small hub.
+            const RAYS: [f32; 12] = [
+                1.0, 0.78, 0.92, 0.7, 0.96, 0.8, 1.0, 0.74, 0.9, 0.82, 0.94, 0.72,
+            ];
+            for (i, len) in RAYS.iter().enumerate() {
+                let a = i as f32 * TAU / RAYS.len() as f32 - FRAC_PI_2;
+                let (dx, dy) = (a.cos(), a.sin());
+                let (nx, ny) = (-dy, dx);
+                let w = 0.09;
+                painter.add(egui::Shape::convex_polygon(
+                    vec![
+                        p(dx * 0.12 + nx * w, dy * 0.12 + ny * w),
+                        p(dx * len * 0.95, dy * len * 0.95),
+                        p(dx * 0.12 - nx * w, dy * 0.12 - ny * w),
+                    ],
+                    color,
+                    Stroke::NONE,
+                ));
+            }
+            painter.circle_filled(c, s * 0.1, color);
         }
         Icon::Help => {
             painter.circle_filled(c, s * 0.48, color);
