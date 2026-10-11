@@ -11,6 +11,7 @@ authors.workspace = true
 [dependencies]
 opencreative-core.workspace = true
 opencreative-render.workspace = true
+opencreative-sensors.workspace = true
 serde.workspace = true
 toml.workspace = true
 dirs.workspace = true

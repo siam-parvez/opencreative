@@ -7,11 +7,12 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand, ValueEnum};
-use opencreative_config::{FitConfig, Rgb, SceneConfig};
+use opencreative_config::{FitConfig, Metric, Rgb, SceneConfig};
 use opencreative_core::{Player, Scene};
 use opencreative_device as device;
 use opencreative_ipc::{self as ipc, Request, Response};
 use opencreative_render::media::{self, Fit};
+use opencreative_render::panels::Layout;
 use opencreative_render::{Rotation, monitor, rotate};
 use opencreative_sensors::Sensors;
 
@@ -62,7 +63,19 @@ enum Command {
         #[arg(long, value_enum, default_value_t = FitArg::Cover)]
         fit: FitArg,
     },
-    /// Show live CPU/GPU temperatures, load, RAM and the clock.
+    /// Show chosen readings in outlined panels: one large, two small.
+    Panels {
+        /// The large reading.
+        #[arg(long, default_value = "cpu-temp")]
+        primary: Metric,
+        /// The two small readings (give the flag twice).
+        #[arg(long, num_args = 1, default_values = ["cpu-freq", "cpu-load"])]
+        secondary: Vec<Metric>,
+        /// Seconds between updates.
+        #[arg(long, default_value_t = 1.0)]
+        interval: f64,
+    },
+    /// Show live CPU/GPU temperatures, load, RAM and the clock as gauges.
     Monitor {
         /// Seconds between updates.
         #[arg(long, default_value_t = 1.0)]
@@ -179,11 +192,20 @@ fn run_direct(command: Command, serial: Option<&str>, rotation: Rotation) -> Res
             play(Scene::Media { path, fit }, serial, rotation)
         }
         Command::Monitor { interval } => {
-            if !(interval.is_finite() && interval > 0.0) {
-                bail!("interval must be a positive number of seconds");
-            }
-            let interval = Duration::from_secs_f64(interval);
+            let interval = interval_from_secs(interval)?;
             play(Scene::Monitor { interval }, serial, rotation)
+        }
+        Command::Panels {
+            primary,
+            secondary,
+            interval,
+        } => {
+            let layout = Layout {
+                primary,
+                secondary: two_secondaries(&secondary)?,
+            };
+            let interval = interval_from_secs(interval)?;
+            play(Scene::Panels { layout, interval }, serial, rotation)
         }
         _ => unreachable!("not a screen command"),
     }
@@ -224,6 +246,17 @@ fn send_to_daemon(
                 scene: SceneConfig::Image { path, fit },
             }
         }
+        Command::Panels {
+            primary,
+            secondary,
+            interval,
+        } => Request::SetScene {
+            scene: SceneConfig::Panels {
+                primary,
+                secondary: two_secondaries(&secondary)?,
+                interval_secs: interval,
+            },
+        },
         Command::Monitor { interval } => Request::SetScene {
             scene: SceneConfig::Monitor {
                 interval_secs: interval,
@@ -240,6 +273,19 @@ fn send_to_daemon(
     }
     println!("Sent to the OpenCreative daemon.");
     Ok(())
+}
+
+fn interval_from_secs(secs: f64) -> Result<Duration> {
+    if !(secs.is_finite() && secs > 0.0) {
+        bail!("interval must be a positive number of seconds");
+    }
+    Ok(Duration::from_secs_f64(secs))
+}
+
+fn two_secondaries(given: &[Metric]) -> Result<[Metric; 2]> {
+    given
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("give exactly two --secondary readings"))
 }
 
 /// Brightness from the config file, if one sets it.

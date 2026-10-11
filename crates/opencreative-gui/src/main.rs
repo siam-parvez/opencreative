@@ -1,4 +1,5 @@
-//! OpenCreative desktop app: choose what the cooler shows, with a live preview.
+//! OpenCreative desktop app: a dashboard of live readings and controls for
+//! what the cooler's screen shows, with a live preview.
 //!
 //! The app is a client of the daemon, which owns the USB device. If no daemon
 //! is running, it starts one in-process for as long as the window is open.
@@ -6,9 +7,14 @@
 // No console window alongside the app on Windows (debug builds keep it for logs).
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod icons;
+mod pages;
+mod prefs;
 mod sensors;
 #[cfg(target_os = "linux")]
 mod service;
+mod theme;
+mod widgets;
 
 use std::fs;
 use std::path::PathBuf;
@@ -16,14 +22,18 @@ use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use eframe::egui;
-use opencreative_config::{Config, FitConfig, Rgb, SceneConfig};
+use eframe::egui::{self, Align2, Color32, Frame, Margin, Sense, Stroke, vec2};
+use opencreative_config::{Config, Rgb, SceneConfig};
 use opencreative_core::Player;
 use opencreative_daemon::Daemon;
 use opencreative_ipc::{self as ipc, Request, Response};
 use opencreative_protocol::pixel;
 use opencreative_render::Rotation;
-use sensors::SensorHistory;
+
+use crate::icons::Icon;
+use crate::prefs::Appearance;
+use crate::sensors::SensorHistory;
+use crate::theme::Palette;
 
 /// How often to ask the daemon for its state.
 const STATUS_POLL: Duration = Duration::from_secs(2);
@@ -31,8 +41,10 @@ const STATUS_POLL: Duration = Duration::from_secs(2);
 const CONNECT_POLL: Duration = Duration::from_millis(250);
 /// How long to wait for the system service before running one in-window.
 const SERVICE_START_TIMEOUT: Duration = Duration::from_secs(10);
-const PREVIEW_SCALE: f32 = 2.0;
+const DEVICE_SCAN: Duration = Duration::from_secs(3);
+const TOAST_FOR: Duration = Duration::from_secs(4);
 const IMAGE_EXTENSIONS: [&str; 6] = ["png", "jpg", "jpeg", "gif", "webp", "bmp"];
+const RAIL_WIDTH: f32 = 72.0;
 
 fn main() -> eframe::Result {
     env_logger::Builder::from_env(
@@ -44,32 +56,47 @@ fn main() -> eframe::Result {
             .with_title("OpenCreative")
             .with_app_id("opencreative")
             .with_icon(window_icon())
-            .with_inner_size([1000.0, 640.0])
-            .with_min_inner_size([760.0, 560.0]),
+            .with_inner_size(window_size())
+            .with_min_inner_size([960.0, 680.0]),
         ..Default::default()
     };
     eframe::run_native(
         "OpenCreative",
         options,
-        Box::new(|_cc| Ok(Box::new(App::new()))),
+        Box::new(|cc| Ok(Box::new(App::new(cc)))),
     )
+}
+
+/// Initial window size; `OPENCREATIVE_SIZE=WxH` overrides it (for screenshots).
+fn window_size() -> [f32; 2] {
+    std::env::var("OPENCREATIVE_SIZE")
+        .ok()
+        .and_then(|s| {
+            let (w, h) = s.split_once('x')?;
+            Some([w.parse().ok()?, h.parse().ok()?])
+        })
+        .unwrap_or([1180.0, 820.0])
 }
 
 fn window_icon() -> egui::IconData {
     const SIZE: u32 = 128;
-    let rgba = opencreative_render::icon::icon(SIZE)
+    egui::IconData {
+        rgba: icon_rgba(SIZE),
+        width: SIZE,
+        height: SIZE,
+    }
+}
+
+/// The app icon as straight (not premultiplied) RGBA.
+fn icon_rgba(size: u32) -> Vec<u8> {
+    opencreative_render::icon::icon(size)
         .pixels()
         .iter()
         .flat_map(|p| {
             let c = p.demultiply();
             [c.red(), c.green(), c.blue(), c.alpha()]
         })
-        .collect();
-    egui::IconData {
-        rgba,
-        width: SIZE,
-        height: SIZE,
-    }
+        .collect()
 }
 
 /// Desktop integration that only exists on Linux so far.
@@ -117,10 +144,30 @@ mod service {
     }
 }
 
-const SERVICE_SUPPORTED: bool = cfg!(target_os = "linux");
+pub const SERVICE_SUPPORTED: bool = cfg!(target_os = "linux");
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Page {
+    Dashboard,
+    Devices,
+    Device,
+    Settings,
+}
+
+impl Page {
+    fn parse(s: &str) -> Option<Self> {
+        Some(match s {
+            "dashboard" => Page::Dashboard,
+            "devices" => Page::Devices,
+            "device" => Page::Device,
+            "settings" => Page::Settings,
+            _ => return None,
+        })
+    }
+}
 
 /// How the app reaches the daemon.
-enum Link {
+pub enum Link {
     Connecting,
     /// A separate daemon (e.g. the systemd service).
     External,
@@ -131,120 +178,106 @@ enum Link {
     Unavailable(String),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-enum Tab {
-    Screen,
-    Sensors,
-    Service,
+/// A supported cooler found on USB.
+pub struct DeviceRow {
+    pub name: &'static str,
+    pub width: u32,
+    pub height: u32,
+    pub serial: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-enum Kind {
-    Monitor,
-    Image,
-    Solid,
-}
-
-/// The scene being edited, before it is applied.
-#[derive(Debug, Clone, PartialEq)]
-struct Draft {
-    kind: Kind,
-    interval_secs: f64,
-    image: String,
-    fit: FitConfig,
-    color: [u8; 3],
-}
-
-impl Draft {
-    fn from_scene(scene: &SceneConfig) -> Self {
-        let mut draft = Self {
-            kind: Kind::Monitor,
-            interval_secs: 1.0,
-            image: String::new(),
-            fit: FitConfig::Cover,
-            color: [0x22, 0xd3, 0xee],
-        };
-        match scene {
-            SceneConfig::Monitor { interval_secs } => draft.interval_secs = *interval_secs,
-            SceneConfig::Image { path, fit } => {
-                draft.kind = Kind::Image;
-                draft.image = path.display().to_string();
-                draft.fit = *fit;
-            }
-            SceneConfig::Solid { color } => {
-                draft.kind = Kind::Solid;
-                draft.color = color.0;
-            }
-        }
-        draft
-    }
-
-    fn to_scene(&self) -> SceneConfig {
-        match self.kind {
-            Kind::Monitor => SceneConfig::Monitor {
-                interval_secs: self.interval_secs,
-            },
-            Kind::Image => SceneConfig::Image {
-                path: PathBuf::from(self.image.trim()),
-                fit: self.fit,
-            },
-            Kind::Solid => SceneConfig::Solid {
-                color: Rgb(self.color),
-            },
-        }
-    }
-}
-
-/// Renders the draft scene locally, exactly as the device would.
-struct Preview {
+/// The LCD preview, rendered locally exactly as the device would show it.
+pub struct Preview {
     player: Option<Player>,
     /// What `player` was built from; rebuilt when any of it changes.
     key: Option<(SceneConfig, u16, bool)>,
-    accurate: bool,
-    texture: Option<egui::TextureHandle>,
-    size: (u32, u32),
+    pub accurate: bool,
+    pub texture: Option<egui::TextureHandle>,
+    pub size: (u32, u32),
     next_frame: Instant,
-    error: Option<String>,
+    pub error: Option<String>,
+}
+
+struct Toast {
+    text: String,
+    error: bool,
+    since: Instant,
+}
+
+/// Saves a screenshot of one page and exits (`OPENCREATIVE_SCREENSHOT`).
+struct ScreenshotJob {
+    path: PathBuf,
+    requested: bool,
 }
 
 /// A slow job (a password prompt) running off the UI thread.
 type Task = Receiver<(&'static str, service::Result<()>)>;
 
-struct App {
-    tab: Tab,
+pub struct App {
+    pub page: Page,
     client: Option<ipc::Client>,
-    link: Link,
+    pub link: Link,
     embedded: Option<Daemon>,
     next_poll: Instant,
     /// Whether controls have been filled from the daemon's config yet.
     synced: bool,
-    device: Option<String>,
-    applied: Config,
-    draft: Draft,
-    brightness: u8,
-    screen_on: bool,
-    preview: Preview,
-    history: SensorHistory,
-    service: Option<service::ServiceState>,
-    picking_file: Option<Receiver<Option<PathBuf>>>,
-    task: Option<Task>,
-    message: Option<(String, bool)>,
+    pub device: Option<String>,
+    pub screen_on: bool,
+    pub applied: Config,
+    pub brightness: u8,
+    /// The last choice in each mode, so switching modes restores it.
+    pub digital_scene: SceneConfig,
+    pub media_scene: SceneConfig,
+    pub preview: Preview,
+    pub history: SensorHistory,
+    pub gpu_name: Option<String>,
+    pub devices: Vec<DeviceRow>,
+    devices_next: Instant,
+    pub service: Option<service::ServiceState>,
+    pub picking_file: Option<Receiver<Option<PathBuf>>>,
+    pub task: Option<Task>,
+    toast: Option<Toast>,
+    pub appearance: Appearance,
+    logo: Option<egui::TextureHandle>,
+    screenshot: Option<ScreenshotJob>,
+    started: Instant,
 }
 
 impl App {
-    fn new() -> Self {
+    fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        theme::install(&cc.egui_ctx);
+        let mut appearance = prefs::load().appearance;
+        if let Ok(theme) = std::env::var("OPENCREATIVE_THEME") {
+            appearance = match theme.as_str() {
+                "dark" => Appearance::Dark,
+                "light" => Appearance::Light,
+                _ => appearance,
+            };
+        }
+        cc.egui_ctx.set_theme(appearance.preference());
+
+        let page = std::env::var("OPENCREATIVE_PAGE")
+            .ok()
+            .and_then(|p| Page::parse(&p))
+            .unwrap_or(Page::Dashboard);
+        let screenshot = std::env::var_os("OPENCREATIVE_SCREENSHOT").map(|path| ScreenshotJob {
+            path: path.into(),
+            requested: false,
+        });
+
         let applied = Config::default();
         Self {
-            tab: Tab::Screen,
+            page,
             client: None,
             link: Link::Connecting,
             embedded: None,
             next_poll: Instant::now(),
             synced: false,
             device: None,
-            draft: Draft::from_scene(&applied.scene),
-            brightness: 100,
             screen_on: true,
+            brightness: 100,
+            digital_scene: SceneConfig::default(),
+            media_scene: default_media_scene(),
             applied,
             preview: Preview {
                 player: None,
@@ -256,10 +289,17 @@ impl App {
                 error: None,
             },
             history: SensorHistory::new(),
+            gpu_name: gl_renderer(cc),
+            devices: Vec::new(),
+            devices_next: Instant::now(),
             service: None,
             picking_file: None,
             task: None,
-            message: None,
+            toast: None,
+            appearance,
+            logo: None,
+            screenshot,
+            started: Instant::now(),
         }
     }
 
@@ -268,7 +308,7 @@ impl App {
         if Instant::now() < self.next_poll {
             return;
         }
-        if self.tab == Tab::Service {
+        if self.page == Page::Settings {
             self.service = Some(service::query());
         }
         if self.client.is_none() {
@@ -281,13 +321,13 @@ impl App {
         };
         match client.request(&Request::Status) {
             Ok(Response::Status(status)) => {
-                // Follow outside changes (e.g. from the CLI) unless the user
-                // has unapplied edits.
-                if !self.synced || self.draft == Draft::from_scene(&self.applied.scene) {
-                    self.draft = Draft::from_scene(&status.config.scene);
-                }
                 if !self.synced || Some(self.brightness) == self.applied.brightness {
                     self.brightness = status.config.brightness.unwrap_or(100);
+                }
+                if is_digital(&status.config.scene) {
+                    self.digital_scene = status.config.scene.clone();
+                } else {
+                    self.media_scene = status.config.scene.clone();
                 }
                 self.synced = true;
                 self.device = status.device;
@@ -348,32 +388,39 @@ impl App {
         }
     }
 
-    fn send(&mut self, request: Request) {
+    pub fn is_connected(&self) -> bool {
+        self.client.is_some()
+    }
+
+    /// Sends a request; returns whether the daemon accepted it.
+    pub fn send(&mut self, request: Request) -> bool {
         let Some(client) = self.client.as_mut() else {
-            self.fail("not connected to the daemon".into());
-            return;
+            self.fail("not connected to the OpenCreative service".into());
+            return false;
         };
         match client.request(&request) {
             Ok(Response::Ok) => {
-                self.message = Some(("Applied.".into(), false));
-                self.next_poll = Instant::now();
+                self.next_poll = Instant::now() + Duration::from_millis(300);
+                true
             }
-            Ok(Response::Error { message }) => self.fail(message),
-            Ok(other) => self.fail(format!("unexpected daemon response: {other:?}")),
+            Ok(Response::Error { message }) => {
+                self.fail(message);
+                false
+            }
+            Ok(other) => {
+                self.fail(format!("unexpected daemon response: {other:?}"));
+                false
+            }
             Err(e) => {
                 self.client = None;
                 self.fail(format!("lost the daemon: {e}"));
+                false
             }
         }
     }
 
-    fn fail(&mut self, message: String) {
-        log::warn!("{message}");
-        self.message = Some((message, true));
-    }
-
-    fn apply_scene(&mut self) {
-        let mut scene = self.draft.to_scene();
+    /// Shows `scene` on the cooler now and remembers it for its mode.
+    pub fn set_scene(&mut self, mut scene: SceneConfig) {
         // The daemon has its own working directory.
         if let SceneConfig::Image { path, .. } = &mut scene {
             match fs::canonicalize(&*path) {
@@ -381,16 +428,46 @@ impl App {
                 Err(e) => return self.fail(format!("{}: {e}", path.display())),
             }
         }
-        self.send(Request::SetScene { scene });
+        if is_digital(&scene) {
+            self.digital_scene = scene.clone();
+        } else {
+            self.media_scene = scene.clone();
+        }
+        if scene != self.applied.scene
+            && self.send(Request::SetScene {
+                scene: scene.clone(),
+            })
+        {
+            // Show it right away; the next status poll confirms it.
+            self.applied.scene = scene;
+        }
     }
 
-    fn enable_service(&mut self) {
+    pub fn set_rotation(&mut self, degrees: u16) {
+        if degrees != self.applied.rotation && self.send(Request::SetRotation { degrees }) {
+            self.applied.rotation = degrees;
+        }
+    }
+
+    pub fn set_screen(&mut self, on: bool) {
+        if self.send(Request::SetScreen { on }) {
+            self.screen_on = on;
+        }
+    }
+
+    pub fn set_brightness(&mut self, percent: u8) {
+        if self.send(Request::SetBrightness { percent }) {
+            self.applied.brightness = Some(percent);
+        }
+    }
+
+    pub fn enable_service(&mut self) {
         // The service's daemon needs the device and socket this window holds.
         self.stop_embedded();
         match service::enable() {
             Ok(()) => {
                 self.link = Link::WaitingForService(Instant::now() + SERVICE_START_TIMEOUT);
-                self.message = Some(("Background service started.".into(), false));
+                self.notify("Running in the background.");
             }
             Err(e) => {
                 self.link = Link::Connecting;
@@ -401,15 +478,14 @@ impl App {
         self.next_poll = Instant::now();
     }
 
-    fn disable_service(&mut self) {
+    pub fn disable_service(&mut self) {
         match service::disable() {
             Ok(()) => {
                 self.client = None;
                 self.link = Link::Connecting;
-                self.message = Some((
-                    "Background service stopped; this window drives the screen while open.".into(),
-                    false,
-                ));
+                self.notify(
+                    "Background service stopped; this window drives the screen while open.",
+                );
             }
             Err(e) => self.fail(format!("stopping the background service: {e}")),
         }
@@ -418,7 +494,7 @@ impl App {
         self.next_poll = Instant::now() + Duration::from_millis(500);
     }
 
-    fn run_task(
+    pub fn run_task(
         &mut self,
         ctx: &egui::Context,
         label: &'static str,
@@ -433,7 +509,7 @@ impl App {
         self.task = Some(rx);
     }
 
-    fn browse_for_image(&mut self, ctx: &egui::Context) {
+    pub fn browse_for_image(&mut self, ctx: &egui::Context) {
         let (tx, rx) = mpsc::channel();
         let ctx = ctx.clone();
         thread::spawn(move || {
@@ -447,14 +523,39 @@ impl App {
         self.picking_file = Some(rx);
     }
 
+    pub fn show_image(&mut self, path: PathBuf) {
+        let fit = match &self.media_scene {
+            SceneConfig::Image { fit, .. } => *fit,
+            _ => Default::default(),
+        };
+        self.set_scene(SceneConfig::Image { path, fit });
+        self.page = Page::Device;
+    }
+
+    pub fn notify(&mut self, text: impl Into<String>) {
+        self.toast = Some(Toast {
+            text: text.into(),
+            error: false,
+            since: Instant::now(),
+        });
+    }
+
+    pub fn fail(&mut self, text: String) {
+        log::warn!("{text}");
+        self.toast = Some(Toast {
+            text,
+            error: true,
+            since: Instant::now(),
+        });
+    }
+
     /// Collects results from the file dialog and background tasks.
     fn poll_background(&mut self) {
         if let Some(rx) = &self.picking_file {
             match rx.try_recv() {
                 Ok(Some(path)) => {
-                    self.draft.kind = Kind::Image;
-                    self.draft.image = path.display().to_string();
                     self.picking_file = None;
+                    self.show_image(path);
                 }
                 Ok(None) | Err(TryRecvError::Disconnected) => self.picking_file = None,
                 Err(TryRecvError::Empty) => {}
@@ -463,8 +564,8 @@ impl App {
         if let Some(rx) = &self.task {
             match rx.try_recv() {
                 Ok((label, Ok(()))) => {
-                    self.message = Some((format!("{label}: done."), false));
                     self.task = None;
+                    self.notify(format!("{label}: done."));
                 }
                 Ok((label, Err(e))) => {
                     self.task = None;
@@ -479,15 +580,37 @@ impl App {
     fn handle_dropped_files(&mut self, ctx: &egui::Context) {
         let dropped = ctx.input(|i| i.raw.dropped_files.clone());
         if let Some(file) = dropped.first() {
-            self.draft.kind = Kind::Image;
-            self.draft.image = file.path().display().to_string();
+            self.show_image(file.path().to_owned());
         }
     }
 
-    /// Re-renders the preview when the draft changes or a frame is due.
+    fn scan_devices(&mut self) {
+        if Instant::now() < self.devices_next {
+            return;
+        }
+        self.devices_next = Instant::now() + DEVICE_SCAN;
+        // Listing only enumerates USB; it never claims the device.
+        if let Ok(found) = opencreative_device::discover() {
+            self.devices = found
+                .iter()
+                .map(|f| DeviceRow {
+                    name: f.spec.name,
+                    width: f.spec.width,
+                    height: f.spec.height,
+                    serial: f.serial().map(str::to_owned),
+                })
+                .collect();
+        }
+    }
+
+    /// Re-renders the preview when the scene changes or a frame is due.
     fn update_preview(&mut self, ctx: &egui::Context) {
         let p = &mut self.preview;
-        let key = (self.draft.to_scene(), self.applied.rotation, p.accurate);
+        let key = (
+            self.applied.scene.clone(),
+            self.applied.rotation,
+            p.accurate,
+        );
         let rotation = Rotation::from_degrees(self.applied.rotation).unwrap_or_default();
         let spec = &opencreative_device::SUPPORTED[0];
         // Upright, as it looks on the mounted pump.
@@ -524,12 +647,12 @@ impl App {
                         &rgba,
                     );
                     match &mut p.texture {
-                        Some(texture) => texture.set(image, egui::TextureOptions::NEAREST),
+                        Some(texture) => texture.set(image, egui::TextureOptions::LINEAR),
                         None => {
                             p.texture = Some(ctx.load_texture(
                                 "preview",
                                 image,
-                                egui::TextureOptions::NEAREST,
+                                egui::TextureOptions::LINEAR,
                             ));
                         }
                     }
@@ -544,237 +667,184 @@ impl App {
         ctx.request_repaint_after(p.next_frame.saturating_duration_since(now));
     }
 
-    fn status_bar(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
-            ui.heading("OpenCreative");
-            ui.separator();
-            ui.selectable_value(&mut self.tab, Tab::Screen, "Screen");
-            ui.selectable_value(&mut self.tab, Tab::Sensors, "Sensors");
-            ui.selectable_value(&mut self.tab, Tab::Service, "Service");
-            ui.separator();
-            match &self.device {
-                Some(name) => ui.colored_label(egui::Color32::LIGHT_GREEN, format!("● {name}")),
-                None => ui.colored_label(egui::Color32::GRAY, "○ no cooler connected"),
-            };
-            ui.separator();
-            match &self.link {
-                Link::Connecting => ui.label("connecting…"),
-                Link::WaitingForService(_) => ui.label("starting background service…"),
-                Link::External => ui.label("background service running"),
-                Link::Embedded => ui
-                    .colored_label(
-                        egui::Color32::from_rgb(0xfb, 0xbf, 0x24),
-                        "running in this window only",
-                    )
-                    .on_hover_text(
-                        "The screen stops updating when this window closes. \
-                         Turn on the background service in the Service tab.",
-                    ),
-                Link::Unavailable(e) => ui.colored_label(
-                    egui::Color32::LIGHT_RED,
-                    format!("service unavailable: {e}"),
-                ),
-            };
+    fn logo(&mut self, ctx: &egui::Context) -> egui::TextureId {
+        self.logo
+            .get_or_insert_with(|| {
+                let image = egui::ColorImage::from_rgba_unmultiplied([64, 64], &icon_rgba(64));
+                ctx.load_texture("logo", image, egui::TextureOptions::LINEAR)
+            })
+            .id()
+    }
+
+    /// The navigation rail on the left, like the vendor app's.
+    fn rail(&mut self, ui: &mut egui::Ui) {
+        let p = Palette::of(ui.ctx());
+        let logo = self.logo(ui.ctx());
+        ui.vertical_centered(|ui| {
+            ui.add_space(14.0);
+            ui.add(egui::Image::new((logo, vec2(36.0, 36.0))));
+            ui.add_space(18.0);
+            for (page, icon, label) in [
+                (Page::Dashboard, Icon::Dashboard, "Dashboard"),
+                (Page::Devices, Icon::Devices, "Devices"),
+                (Page::Device, Icon::Cooler, "Cooler screen"),
+            ] {
+                self.rail_item(ui, &p, page, icon, label);
+            }
+        });
+        ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui| {
+            ui.add_space(12.0);
+            self.rail_item(ui, &p, Page::Settings, Icon::Settings, "Settings");
         });
     }
 
-    fn screen_controls(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Screen");
-        ui.horizontal(|ui| {
-            ui.radio_value(&mut self.draft.kind, Kind::Monitor, "System monitor");
-            ui.radio_value(&mut self.draft.kind, Kind::Image, "Image / GIF");
-            ui.radio_value(&mut self.draft.kind, Kind::Solid, "Color");
-        });
-        ui.add_space(6.0);
-        match self.draft.kind {
-            Kind::Monitor => {
-                ui.add(
-                    egui::Slider::new(&mut self.draft.interval_secs, 0.25..=5.0)
-                        .text("seconds between updates"),
-                );
-            }
-            Kind::Image => {
-                ui.label("File (or drop one onto the window):");
-                ui.horizontal(|ui| {
-                    ui.add(
-                        egui::TextEdit::singleline(&mut self.draft.image)
-                            .hint_text("/path/to/image.gif")
-                            .desired_width(220.0),
-                    );
-                    let browsing = self.picking_file.is_some();
-                    if ui
-                        .add_enabled(!browsing, egui::Button::new("Browse…"))
-                        .clicked()
-                    {
-                        self.browse_for_image(ui.ctx());
+    fn rail_item(&mut self, ui: &mut egui::Ui, p: &Palette, page: Page, icon: Icon, label: &str) {
+        let (rect, response) = ui.allocate_exact_size(vec2(RAIL_WIDTH, 52.0), Sense::click());
+        let selected = self.page == page;
+        let painter = ui.painter();
+        if response.hovered() && !selected {
+            painter.rect_filled(rect.shrink2(vec2(12.0, 4.0)), 8.0, p.accent_soft);
+        }
+        if selected {
+            let bar = egui::Rect::from_min_size(
+                rect.left_top() + vec2(0.0, 12.0),
+                vec2(3.0, rect.height() - 24.0),
+            );
+            painter.rect_filled(bar, 2.0, p.accent);
+        }
+        let color = if selected { p.accent } else { p.muted };
+        icons::paint(
+            painter,
+            egui::Rect::from_center_size(rect.center(), vec2(24.0, 24.0)),
+            icon,
+            color,
+        );
+        if response.on_hover_text(label).clicked() {
+            self.page = page;
+        }
+    }
+
+    /// The status chip in the bottom-right corner, plus transient messages.
+    fn status_pill(&mut self, ctx: &egui::Context) {
+        let p = Palette::of(ctx);
+        let (text, dot) = match (&self.link, &self.device) {
+            (Link::Unavailable(_), _) => ("Service unavailable", p.bad),
+            (Link::Connecting | Link::WaitingForService(_), _) => ("Connecting…", p.faint),
+            (_, None) => ("No cooler connected", p.faint),
+            (_, Some(_)) if !self.screen_on => ("Screen off", p.faint),
+            (Link::External, Some(_)) => ("Running in background", p.good),
+            (Link::Embedded, Some(_)) => ("Running in this window", p.warn),
+        };
+        let toast = self
+            .toast
+            .as_ref()
+            .filter(|t| t.since.elapsed() < TOAST_FOR)
+            .map(|t| (t.text.clone(), t.error));
+        egui::Area::new(egui::Id::new("status-pill"))
+            .anchor(Align2::RIGHT_BOTTOM, vec2(-18.0, -18.0))
+            .order(egui::Order::Foreground)
+            .show(ctx, |ui| {
+                ui.with_layout(egui::Layout::top_down(egui::Align::Max), |ui| {
+                    if let Some((text, error)) = &toast {
+                        Frame::new()
+                            .fill(if *error {
+                                p.bad
+                            } else {
+                                Color32::from_rgb(0x1f, 0x29, 0x37)
+                            })
+                            .corner_radius(8)
+                            .inner_margin(Margin::symmetric(14, 10))
+                            .show(ui, |ui| {
+                                ui.set_max_width(420.0);
+                                ui.label(egui::RichText::new(text).color(Color32::WHITE));
+                            });
+                        ui.add_space(8.0);
+                    }
+                    let pill = Frame::new()
+                        .fill(Color32::from_rgb(0x1f, 0x29, 0x37))
+                        .corner_radius(20)
+                        .inner_margin(Margin::symmetric(16, 9))
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(
+                                    egui::RichText::new(text)
+                                        .font(theme::medium(13.0))
+                                        .color(Color32::WHITE),
+                                );
+                                let (dot_rect, _) =
+                                    ui.allocate_exact_size(vec2(10.0, 10.0), Sense::hover());
+                                ui.painter().circle_filled(dot_rect.center(), 4.5, dot);
+                            });
+                        })
+                        .response
+                        .interact(Sense::click());
+                    if pill.on_hover_text("Service settings").clicked() {
+                        self.page = Page::Settings;
                     }
                 });
-                egui::ComboBox::from_label("Fit")
-                    .selected_text(fit_label(self.draft.fit))
-                    .show_ui(ui, |ui| {
-                        for fit in [FitConfig::Cover, FitConfig::Contain, FitConfig::Stretch] {
-                            ui.selectable_value(&mut self.draft.fit, fit, fit_label(fit));
-                        }
-                    });
-            }
-            Kind::Solid => {
-                ui.horizontal(|ui| {
-                    ui.label("Color");
-                    ui.color_edit_button_srgb(&mut self.draft.color);
-                });
-            }
-        }
-        ui.add_space(6.0);
-        let dirty = self.draft.to_scene() != self.applied.scene;
-        ui.horizontal(|ui| {
-            if ui
-                .add_enabled(dirty && self.client.is_some(), egui::Button::new("Apply"))
-                .clicked()
-            {
-                self.apply_scene();
-            }
-            if ui.add_enabled(dirty, egui::Button::new("Revert")).clicked() {
-                self.draft = Draft::from_scene(&self.applied.scene);
-            }
-        });
-
-        ui.add_space(12.0);
-        ui.separator();
-        ui.heading("Display");
-        let slider = ui.add(egui::Slider::new(&mut self.brightness, 0..=100).text("brightness"));
-        // Send once the user lets go, not on every pixel of a drag.
-        if slider.drag_stopped() || (slider.changed() && !slider.dragged()) {
-            self.send(Request::SetBrightness {
-                percent: self.brightness,
             });
-        }
-        let mut rotation = self.applied.rotation;
-        egui::ComboBox::from_label("Rotation")
-            .selected_text(format!("{rotation}°"))
-            .show_ui(ui, |ui| {
-                for degrees in [0, 90, 180, 270] {
-                    ui.selectable_value(&mut rotation, degrees, format!("{degrees}°"));
-                }
-            });
-        if rotation != self.applied.rotation {
-            self.send(Request::SetRotation { degrees: rotation });
-        }
-        let label = if self.screen_on {
-            "Turn screen off"
-        } else {
-            "Turn screen on"
-        };
-        if ui
-            .add_enabled(self.client.is_some(), egui::Button::new(label))
-            .clicked()
-        {
-            self.send(Request::SetScreen {
-                on: !self.screen_on,
-            });
+        if toast.is_some() {
+            ctx.request_repaint_after(Duration::from_millis(500));
         }
     }
 
-    fn preview_panel(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
-            ui.heading("Preview");
-            ui.checkbox(&mut self.preview.accurate, "Device-accurate colors")
-                .on_hover_text("Show the panel's 16-bit color (RGB565 with dithering)");
-        });
-        let dirty = self.draft.to_scene() != self.applied.scene;
-        ui.label(if dirty {
-            "Unapplied changes — press Apply to send them to the cooler."
-        } else {
-            "This is what the cooler shows."
-        });
-        ui.add_space(8.0);
-        if let Some(texture) = &self.preview.texture {
-            let (w, h) = self.preview.size;
-            let size = egui::vec2(w as f32, h as f32) * PREVIEW_SCALE;
-            ui.image((texture.id(), size));
-        }
-        if let Some(e) = &self.preview.error {
-            ui.colored_label(egui::Color32::LIGHT_RED, e);
-        }
-    }
-
-    fn service_panel(&mut self, ui: &mut egui::Ui) {
-        if !SERVICE_SUPPORTED {
-            ui.heading("Background service");
-            ui.label("Managing the background service from here is Linux-only for now.");
+    fn handle_screenshot(&mut self, ctx: &egui::Context) {
+        let Some(job) = self.screenshot.as_mut() else {
             return;
+        };
+        // Give sensors, the daemon and the preview time to fill in.
+        if !job.requested && self.started.elapsed() > Duration::from_secs(4) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(Default::default()));
+            job.requested = true;
         }
-        let ctx = ui.ctx().clone();
-        let busy = self.task.is_some();
-
-        ui.heading("Background service");
-        ui.label(
-            "Keeps the cooler's screen updated when this window is closed, \
-             starting at login (a systemd user service).",
-        );
-        let state = self.service.unwrap_or_else(service::query);
-        ui.label(match (state.enabled, state.active) {
-            (_, true) => "● Running",
-            (true, false) => "○ Enabled, but not running",
-            (false, false) => "○ Off",
+        let shot = ctx.input(|i| {
+            i.raw.events.iter().find_map(|e| match e {
+                egui::Event::Screenshot { image, .. } => Some(image.clone()),
+                _ => None,
+            })
         });
-        if state.enabled {
-            if ui.button("Turn off background service").clicked() {
-                self.disable_service();
-            }
-        } else if ui.button("Run in the background").clicked() {
-            self.enable_service();
+        if let Some(image) = shot {
+            let [w, h] = image.size;
+            let bytes: Vec<u8> = image.pixels.iter().flat_map(|c| c.to_array()).collect();
+            let saved = tiny_skia_pixmap(bytes, w as u32, h as u32)
+                .map(|pm| pm.save_png(&job.path).is_ok())
+                .unwrap_or(false);
+            log::info!("screenshot saved: {saved} ({})", job.path.display());
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
-
-        ui.add_space(12.0);
-        ui.separator();
-        ui.heading("USB access");
-        if service::udev_rule_installed() {
-            ui.label("✓ The USB rule is installed: OpenCreative can use the cooler without root.");
-        } else {
-            ui.label(
-                "OpenCreative needs a udev rule to use the cooler without root. \
-                 Installing it asks for your password.",
-            );
-            if ui
-                .add_enabled(!busy, egui::Button::new("Install USB rule"))
-                .clicked()
-            {
-                self.run_task(&ctx, "Installing the USB rule", service::install_udev_rule);
-            }
-            ui.label("Or run this in a terminal:");
-            let command = service::udev_install_command();
-            ui.horizontal(|ui| {
-                ui.code(&command);
-                if ui.small_button("Copy").clicked() {
-                    ctx.copy_text(command.clone());
-                }
-            });
-        }
-
-        ui.add_space(12.0);
-        ui.separator();
-        ui.heading("App menu");
-        if service::desktop_entry_installed() {
-            ui.label("✓ OpenCreative is in your app menu.");
-            if ui.button("Remove from app menu").clicked()
-                && let Err(e) = service::remove_desktop_entry()
-            {
-                self.fail(e);
-            }
-        } else if ui.button("Add to app menu").clicked() {
-            match service::install_desktop_entry() {
-                Ok(()) => self.message = Some(("Added to the app menu.".into(), false)),
-                Err(e) => self.fail(e),
-            }
-        }
+        ctx.request_repaint_after(Duration::from_millis(100));
     }
 }
 
-fn fit_label(fit: FitConfig) -> &'static str {
-    match fit {
-        FitConfig::Cover => "Fill (crop)",
-        FitConfig::Contain => "Fit (letterbox)",
-        FitConfig::Stretch => "Stretch",
+fn tiny_skia_pixmap(
+    premultiplied_rgba: Vec<u8>,
+    w: u32,
+    h: u32,
+) -> Option<opencreative_render::Pixmap> {
+    let size = tiny_skia::IntSize::from_wh(w, h)?;
+    opencreative_render::Pixmap::from_vec(premultiplied_rgba, size)
+}
+
+/// GPU name from the OpenGL driver, e.g. "Intel(R) Graphics (RPL-S)".
+fn gl_renderer(cc: &eframe::CreationContext<'_>) -> Option<String> {
+    use eframe::glow::HasContext;
+    let gl = cc.gl.as_ref()?;
+    // SAFETY: querying a string parameter on the current, valid GL context.
+    let name = unsafe { gl.get_parameter_string(eframe::glow::RENDERER) };
+    let name = name.trim_start_matches("Mesa ").trim();
+    (!name.is_empty() && !name.contains("llvmpipe")).then(|| name.to_owned())
+}
+
+pub fn is_digital(scene: &SceneConfig) -> bool {
+    matches!(
+        scene,
+        SceneConfig::Panels { .. } | SceneConfig::Monitor { .. }
+    )
+}
+
+fn default_media_scene() -> SceneConfig {
+    SceneConfig::Solid {
+        color: Rgb([0x0d, 0x9b, 0x94]),
     }
 }
 
@@ -784,34 +854,37 @@ impl eframe::App for App {
         self.poll();
         self.poll_background();
         self.handle_dropped_files(&ctx);
-        if self.tab == Tab::Screen {
+        if matches!(self.page, Page::Device | Page::Devices) {
             self.update_preview(&ctx);
+        }
+        if self.page == Page::Devices {
+            self.scan_devices();
+            ctx.request_repaint_after(DEVICE_SCAN);
         }
         let until_sample = self.history.tick();
         let until_poll = self.next_poll.saturating_duration_since(Instant::now());
         ctx.request_repaint_after(until_sample.min(until_poll));
+        self.handle_screenshot(&ctx);
 
-        egui::Panel::top("status").show(ui, |ui| self.status_bar(ui));
-        egui::Panel::bottom("message").show(ui, |ui| match &self.message {
-            Some((text, true)) => ui.colored_label(egui::Color32::LIGHT_RED, text),
-            Some((text, false)) => ui.label(text),
-            None => ui.label(""),
-        });
-        match self.tab {
-            Tab::Screen => {
-                egui::Panel::left("controls")
-                    .resizable(false)
-                    .exact_size(360.0)
-                    .show(ui, |ui| self.screen_controls(ui));
-                egui::CentralPanel::default().show(ui, |ui| self.preview_panel(ui));
-            }
-            Tab::Sensors => {
-                egui::CentralPanel::default().show(ui, |ui| self.history.ui(ui));
-            }
-            Tab::Service => {
-                egui::CentralPanel::default().show(ui, |ui| self.service_panel(ui));
-            }
-        }
+        let p = Palette::of(&ctx);
+        egui::Panel::left("rail")
+            .resizable(false)
+            .exact_size(RAIL_WIDTH)
+            .frame(Frame::new().fill(p.card).stroke(Stroke::new(1.0, p.border)))
+            .show(ui, |ui| self.rail(ui));
+        egui::CentralPanel::default()
+            .frame(Frame::new().fill(p.bg).inner_margin(Margin::same(24)))
+            .show(ui, |ui| {
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| match self.page {
+                        Page::Dashboard => pages::dashboard::show(self, ui),
+                        Page::Devices => pages::devices::show(self, ui),
+                        Page::Device => pages::device::show(self, ui),
+                        Page::Settings => pages::settings::show(self, ui),
+                    });
+            });
+        self.status_pill(&ctx);
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
@@ -826,24 +899,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn draft_round_trips_every_scene() {
-        for scene in [
-            SceneConfig::Monitor { interval_secs: 2.5 },
-            SceneConfig::Image {
-                path: "/tmp/a.gif".into(),
-                fit: FitConfig::Contain,
-            },
-            SceneConfig::Solid {
-                color: Rgb([1, 2, 3]),
-            },
-        ] {
-            assert_eq!(Draft::from_scene(&scene).to_scene(), scene);
-        }
-    }
-
-    #[test]
     fn window_icon_has_the_right_size() {
         let icon = window_icon();
         assert_eq!(icon.rgba.len(), (icon.width * icon.height * 4) as usize);
+    }
+
+    #[test]
+    fn digital_and_media_scenes_are_told_apart() {
+        assert!(is_digital(&SceneConfig::default()));
+        assert!(!is_digital(&default_media_scene()));
     }
 }

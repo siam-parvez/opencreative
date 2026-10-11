@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 
 use opencreative_device::{self as device, Display};
 use opencreative_render::media::{self, Fit};
-use opencreative_render::{Pixmap, Rotation, monitor, rotate, solid};
+use opencreative_render::{Pixmap, Rotation, monitor, panels, rotate, solid};
 use opencreative_sensors::Sensors;
 use thiserror::Error;
 
@@ -36,8 +36,13 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// What the screen shows.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Scene {
-    /// Live system monitor, refreshed every `interval`.
+    /// Live system monitor (gauges), refreshed every `interval`.
     Monitor {
+        interval: Duration,
+    },
+    /// Chosen readings in outlined panels, refreshed every `interval`.
+    Panels {
+        layout: panels::Layout,
         interval: Duration,
     },
     /// A still image or animated GIF.
@@ -52,7 +57,12 @@ impl Scene {
     /// Whether playback should wait for a device that isn't plugged in yet
     /// (a background monitor) rather than fail right away (a one-off command).
     fn waits_for_device(&self) -> bool {
-        matches!(self, Self::Monitor { .. })
+        self.is_live()
+    }
+
+    /// Whether the scene shows sensor readings.
+    fn is_live(&self) -> bool {
+        matches!(self, Self::Monitor { .. } | Self::Panels { .. })
     }
 }
 
@@ -80,7 +90,7 @@ pub struct Player {
 
 impl Player {
     pub fn new(scene: Scene, rotation: Rotation) -> Self {
-        let sensors = matches!(scene, Scene::Monitor { .. }).then(Sensors::new);
+        let sensors = scene.is_live().then(Sensors::new);
         Self {
             scene,
             rotation,
@@ -107,6 +117,13 @@ impl Player {
                 let clock = chrono::Local::now().format("%H:%M").to_string();
                 Ok(Output {
                     frame: rotate(&monitor::render(&snap, &clock, w, h), self.rotation),
+                    hold: Some(*interval),
+                })
+            }
+            Scene::Panels { layout, interval } => {
+                let snap = self.sensors.get_or_insert_with(Sensors::new).read();
+                Ok(Output {
+                    frame: rotate(&panels::render(&snap, layout, w, h), self.rotation),
                     hold: Some(*interval),
                 })
             }

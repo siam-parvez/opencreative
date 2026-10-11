@@ -5,9 +5,13 @@ use std::sync::LazyLock;
 use ab_glyph::{Font as _, FontRef, PxScale, ScaleFont as _, point};
 use tiny_skia::Pixmap;
 
-// Rajdhani, SIL Open Font License 1.1 (assets/fonts/OFL.txt).
+// Rajdhani, SIL Open Font License 1.1 (assets/fonts/OFL-Rajdhani.txt).
 static BOLD: LazyLock<FontRef<'static>> = LazyLock::new(|| {
     FontRef::try_from_slice(include_bytes!("../../../assets/fonts/Rajdhani-Bold.ttf"))
+        .expect("bundled font is valid")
+});
+static MEDIUM: LazyLock<FontRef<'static>> = LazyLock::new(|| {
+    FontRef::try_from_slice(include_bytes!("../../../assets/fonts/Rajdhani-Medium.ttf"))
         .expect("bundled font is valid")
 });
 static SEMIBOLD: LazyLock<FontRef<'static>> = LazyLock::new(|| {
@@ -21,6 +25,7 @@ static SEMIBOLD: LazyLock<FontRef<'static>> = LazyLock::new(|| {
 pub enum Weight {
     Bold,
     SemiBold,
+    Medium,
 }
 
 #[derive(Clone, Copy)]
@@ -34,6 +39,7 @@ fn face(weight: Weight) -> &'static FontRef<'static> {
     match weight {
         Weight::Bold => &BOLD,
         Weight::SemiBold => &SEMIBOLD,
+        Weight::Medium => &MEDIUM,
     }
 }
 

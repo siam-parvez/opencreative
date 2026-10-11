@@ -1,5 +1,5 @@
-//! The Sensors tab: recent history of what the monitor screen shows, plus
-//! every temperature sensor found (to see which one the CPU reading uses).
+//! Sensor history for the dashboard: the latest reading, a two-minute chart
+//! and every temperature sensor found.
 
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
@@ -37,7 +37,7 @@ const SERIES: [Series; 4] = [
         label: "GPU temp",
         unit: "°C",
         color: Color32::from_rgb(0xfb, 0xbf, 0x24),
-        value: |s| s.gpu_temp_c,
+        value: |s| s.gpu.temp_c,
     },
     Series {
         label: "RAM",
@@ -78,8 +78,17 @@ impl SensorHistory {
         self.next_sample.saturating_duration_since(now)
     }
 
-    pub fn ui(&self, ui: &mut egui::Ui) {
-        ui.heading("Last two minutes");
+    /// The most recent reading, if one has been taken.
+    pub fn latest(&self) -> Option<&Snapshot> {
+        self.samples.back()
+    }
+
+    pub fn temperatures(&self) -> &[(String, Option<f32>)] {
+        &self.temperatures
+    }
+
+    /// Legend with current values, then the chart.
+    pub fn chart_with_legend(&self, ui: &mut egui::Ui) {
         ui.horizontal_wrapped(|ui| {
             for series in &SERIES {
                 let latest = self.samples.back().and_then(series.value);
@@ -87,28 +96,13 @@ impl SensorHistory {
                     Some(v) => format!("{} {v:.0}{}", series.label, series.unit),
                     None => format!("{} --", series.label),
                 };
-                ui.colored_label(series.color, text);
-                ui.add_space(12.0);
+                let (dot, _) = ui.allocate_exact_size(vec2(10.0, 10.0), Sense::hover());
+                ui.painter().circle_filled(dot.center(), 4.0, series.color);
+                ui.label(text);
+                ui.add_space(10.0);
             }
         });
         self.chart(ui);
-
-        ui.add_space(12.0);
-        ui.heading("Temperature sensors");
-        ui.label(
-            "The CPU reading uses the first package/Tctl sensor; GPU the first amdgpu/nvidia one.",
-        );
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            egui::Grid::new("temperatures")
-                .striped(true)
-                .show(ui, |ui| {
-                    for (label, temp) in &self.temperatures {
-                        ui.label(label);
-                        ui.label(temp.map_or("-".to_owned(), |t| format!("{t:.1} °C")));
-                        ui.end_row();
-                    }
-                });
-        });
     }
 
     /// Line chart on a fixed 0-100 scale, which fits both °C and %.
@@ -117,7 +111,7 @@ impl SensorHistory {
         let (rect, _) = ui.allocate_exact_size(vec2(width, CHART_HEIGHT), Sense::hover());
         let painter = ui.painter_at(rect);
         let visuals = ui.visuals();
-        painter.rect_filled(rect, 4.0, visuals.extreme_bg_color);
+        painter.rect_filled(rect, 6.0, visuals.extreme_bg_color);
 
         let plot = rect.shrink2(vec2(28.0, 10.0)).translate(vec2(12.0, 0.0));
         let y_of = |v: f32| plot.bottom() - v.clamp(0.0, 100.0) / 100.0 * plot.height();

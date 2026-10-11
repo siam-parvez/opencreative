@@ -166,7 +166,7 @@ fn status_strip(pm: &mut Pixmap, snap: &Snapshot, clock: &str, w: f32, h: f32) {
 
     let cy = top + STRIP / 2.0;
     let size = 22.0;
-    let (gpu, gpu_color) = match snap.gpu_temp_c {
+    let (gpu, gpu_color) = match snap.gpu.temp_c {
         Some(t) => (format!("GPU {t:.0}°"), temp_color(t)),
         None => ("GPU --".to_owned(), MUTED),
     };
@@ -225,7 +225,7 @@ fn ramp(stops: &[(f32, [u8; 3])], v: f32) -> [u8; 3] {
     last.1
 }
 
-fn temp_color(celsius: f32) -> [u8; 3] {
+pub(crate) fn temp_color(celsius: f32) -> [u8; 3] {
     ramp(
         &[
             (35.0, [0x22, 0xd3, 0xee]),
@@ -267,8 +267,8 @@ mod tests {
             cpu_temp_c: Some(61.0),
             cpu_load_pct: 37.0,
             cpu_mhz: 4200,
-            gpu_temp_c: None,
             mem_used_pct: 48.0,
+            ..Snapshot::default()
         };
         for (w, h) in [(320, 240), (240, 320)] {
             let pm = render(&snap, "12:34", w, h);
