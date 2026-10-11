@@ -19,7 +19,18 @@ impl Client {
 
 pub struct Server;
 
+#[derive(Clone)]
+pub struct Stopper;
+
+impl Stopper {
+    pub fn stop(&self) {}
+}
+
 impl Server {
+    pub fn stopper(&self) -> Stopper {
+        Stopper
+    }
+
     pub fn bind(_path: &Path) -> Result<Self> {
         Err(Error::Unsupported)
     }

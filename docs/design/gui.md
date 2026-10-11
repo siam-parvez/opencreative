@@ -69,7 +69,10 @@ opencreative CLI ─┼─ IPC (local socket, JSON lines) ─▶ opencreative da
    the captured "Zen mode" packet had no visible effect.
    **GUI MVP (Linux)** — Device + Screens + live preview, client of the daemon,
    standalone fallback.
-4. **Polish** — media library, sensors history, service page, tray, `.desktop`
+4. ~~Polish~~ — done: file picker, sensor history, Service tab (systemd
+   handover, udev rule via polkit, app-menu entry), icon drawn in code.
+   Tray deferred: `tray-icon` needs GTK3 dev libraries to build on Linux.
+   **Polish** — media library, sensors history, service page, tray, `.desktop`
    file + icon, release artifact.
 5. **Windows / macOS** — named-pipe IPC, per-OS autostart (Task Scheduler / Run
    key, LaunchAgent), WinUSB/Zadig detection and guidance, signed builds.

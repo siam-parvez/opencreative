@@ -6,6 +6,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::Duration;
 
@@ -65,6 +66,22 @@ impl Client {
 pub struct Server {
     listener: UnixListener,
     path: PathBuf,
+    stop: Arc<AtomicBool>,
+}
+
+/// Makes a running [`Server::serve`] return, from any thread.
+#[derive(Clone)]
+pub struct Stopper {
+    path: PathBuf,
+    stop: Arc<AtomicBool>,
+}
+
+impl Stopper {
+    pub fn stop(&self) {
+        self.stop.store(true, Ordering::SeqCst);
+        // Wake the blocking accept so the loop sees the flag.
+        let _ = UnixStream::connect(&self.path);
+    }
 }
 
 impl Server {
@@ -85,10 +102,18 @@ impl Server {
         Ok(Self {
             listener,
             path: path.to_owned(),
+            stop: Arc::default(),
         })
     }
 
-    /// Serves clients until the listener fails, one thread per connection.
+    pub fn stopper(&self) -> Stopper {
+        Stopper {
+            path: self.path.clone(),
+            stop: Arc::clone(&self.stop),
+        }
+    }
+
+    /// Serves clients until stopped, one thread per connection.
     /// `hello` is answered here; every other request goes to `handler`.
     pub fn serve<H>(&self, handler: H) -> Result<()>
     where
@@ -96,6 +121,9 @@ impl Server {
     {
         let handler = Arc::new(handler);
         for stream in self.listener.incoming() {
+            if self.stop.load(Ordering::SeqCst) {
+                break;
+            }
             let stream = match stream {
                 Ok(stream) => stream,
                 Err(e) => {
@@ -197,6 +225,17 @@ mod tests {
         let server = Server::bind(&stale).unwrap();
         drop(server);
         assert!(!stale.exists());
+    }
+
+    #[test]
+    fn stopper_ends_serve() {
+        let path = temp_socket("stop");
+        let server = Server::bind(&path).unwrap();
+        let stopper = server.stopper();
+        let serving = thread::spawn(move || server.serve(|_| Response::Ok));
+        stopper.stop();
+        serving.join().unwrap().unwrap();
+        assert!(!path.exists(), "socket removed when the server is dropped");
     }
 
     #[test]

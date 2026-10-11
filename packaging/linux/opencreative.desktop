@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=OpenCreative
+GenericName=Cooler Screen Control
+Comment=Customize DeepCool LCD cooler screens
+Exec=opencreative-gui
+Icon=opencreative
+Terminal=false
+Categories=Utility;Settings;HardwareSettings;
+Keywords=cooler;lcd;deepcool;aio;temperature;
+StartupWMClass=opencreative

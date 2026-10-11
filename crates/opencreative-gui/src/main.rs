@@ -6,24 +6,33 @@
 // No console window alongside the app on Windows (debug builds keep it for logs).
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod sensors;
+#[cfg(target_os = "linux")]
+mod service;
+
 use std::fs;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use eframe::egui;
 use opencreative_config::{Config, FitConfig, Rgb, SceneConfig};
 use opencreative_core::Player;
+use opencreative_daemon::Daemon;
 use opencreative_ipc::{self as ipc, Request, Response};
 use opencreative_protocol::pixel;
 use opencreative_render::Rotation;
+use sensors::SensorHistory;
 
 /// How often to ask the daemon for its state.
 const STATUS_POLL: Duration = Duration::from_secs(2);
-/// Poll faster while waiting for an embedded daemon to come up.
+/// Poll faster while waiting for a daemon to come up.
 const CONNECT_POLL: Duration = Duration::from_millis(250);
+/// How long to wait for the system service before running one in-window.
+const SERVICE_START_TIMEOUT: Duration = Duration::from_secs(10);
 const PREVIEW_SCALE: f32 = 2.0;
+const IMAGE_EXTENSIONS: [&str; 6] = ["png", "jpg", "jpeg", "gif", "webp", "bmp"];
 
 fn main() -> eframe::Result {
     env_logger::Builder::from_env(
@@ -33,6 +42,8 @@ fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("OpenCreative")
+            .with_app_id("opencreative")
+            .with_icon(window_icon())
             .with_inner_size([1000.0, 640.0])
             .with_min_inner_size([760.0, 560.0]),
         ..Default::default()
@@ -44,6 +55,70 @@ fn main() -> eframe::Result {
     )
 }
 
+fn window_icon() -> egui::IconData {
+    const SIZE: u32 = 128;
+    let rgba = opencreative_render::icon::icon(SIZE)
+        .pixels()
+        .iter()
+        .flat_map(|p| {
+            let c = p.demultiply();
+            [c.red(), c.green(), c.blue(), c.alpha()]
+        })
+        .collect();
+    egui::IconData {
+        rgba,
+        width: SIZE,
+        height: SIZE,
+    }
+}
+
+/// Desktop integration that only exists on Linux so far.
+#[cfg(not(target_os = "linux"))]
+mod service {
+    pub type Result<T> = std::result::Result<T, String>;
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub struct ServiceState {
+        pub installed: bool,
+        pub enabled: bool,
+        pub active: bool,
+    }
+
+    pub fn query() -> ServiceState {
+        ServiceState {
+            installed: false,
+            enabled: false,
+            active: false,
+        }
+    }
+    pub fn enable() -> Result<()> {
+        Err("not supported on this platform yet".into())
+    }
+    pub fn disable() -> Result<()> {
+        enable()
+    }
+    pub fn udev_rule_installed() -> bool {
+        true
+    }
+    pub fn udev_install_command() -> String {
+        String::new()
+    }
+    pub fn install_udev_rule() -> Result<()> {
+        enable()
+    }
+    pub fn desktop_entry_installed() -> bool {
+        false
+    }
+    pub fn install_desktop_entry() -> Result<()> {
+        enable()
+    }
+    pub fn remove_desktop_entry() -> Result<()> {
+        enable()
+    }
+}
+
+const SERVICE_SUPPORTED: bool = cfg!(target_os = "linux");
+
 /// How the app reaches the daemon.
 enum Link {
     Connecting,
@@ -51,7 +126,16 @@ enum Link {
     External,
     /// One we started inside this process.
     Embedded,
+    /// The system service was just started; don't run one in-window yet.
+    WaitingForService(Instant),
     Unavailable(String),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Tab {
+    Screen,
+    Sensors,
+    Service,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -123,10 +207,14 @@ struct Preview {
     error: Option<String>,
 }
 
+/// A slow job (a password prompt) running off the UI thread.
+type Task = Receiver<(&'static str, service::Result<()>)>;
+
 struct App {
+    tab: Tab,
     client: Option<ipc::Client>,
     link: Link,
-    embedded_error: Arc<Mutex<Option<String>>>,
+    embedded: Option<Daemon>,
     next_poll: Instant,
     /// Whether controls have been filled from the daemon's config yet.
     synced: bool,
@@ -136,6 +224,10 @@ struct App {
     brightness: u8,
     screen_on: bool,
     preview: Preview,
+    history: SensorHistory,
+    service: Option<service::ServiceState>,
+    picking_file: Option<Receiver<Option<PathBuf>>>,
+    task: Option<Task>,
     message: Option<(String, bool)>,
 }
 
@@ -143,9 +235,10 @@ impl App {
     fn new() -> Self {
         let applied = Config::default();
         Self {
+            tab: Tab::Screen,
             client: None,
             link: Link::Connecting,
-            embedded_error: Arc::default(),
+            embedded: None,
             next_poll: Instant::now(),
             synced: false,
             device: None,
@@ -162,6 +255,10 @@ impl App {
                 next_frame: Instant::now(),
                 error: None,
             },
+            history: SensorHistory::new(),
+            service: None,
+            picking_file: None,
+            task: None,
             message: None,
         }
     }
@@ -171,15 +268,14 @@ impl App {
         if Instant::now() < self.next_poll {
             return;
         }
+        if self.tab == Tab::Service {
+            self.service = Some(service::query());
+        }
         if self.client.is_none() {
             self.connect();
         }
-        self.next_poll = Instant::now()
-            + if self.client.is_some() {
-                STATUS_POLL
-            } else {
-                CONNECT_POLL
-            };
+        let fast = self.client.is_none() && !matches!(self.link, Link::Unavailable(_));
+        self.next_poll = Instant::now() + if fast { CONNECT_POLL } else { STATUS_POLL };
         let Some(client) = self.client.as_mut() else {
             return;
         };
@@ -207,29 +303,48 @@ impl App {
     }
 
     fn connect(&mut self) {
-        if let Some(e) = self.embedded_error.lock().expect("lock").take() {
-            self.link = Link::Unavailable(e);
-        }
         match ipc::Client::connect(&ipc::default_socket_path()) {
             Ok(Some(client)) => {
                 self.client = Some(client);
-                if !matches!(self.link, Link::Embedded) {
-                    self.link = Link::External;
+                self.link = if self.embedded.is_some() {
+                    Link::Embedded
+                } else {
+                    Link::External
+                };
+            }
+            Ok(None) => {
+                if let Link::WaitingForService(deadline) = self.link
+                    && Instant::now() < deadline
+                {
+                    return;
+                }
+                if self.embedded.is_none() {
+                    self.start_embedded();
                 }
             }
-            Ok(None) if matches!(self.link, Link::Connecting) => {
-                // No daemon: run one here so the device still has an owner.
-                let errors = Arc::clone(&self.embedded_error);
-                thread::spawn(move || {
-                    if let Err(e) = opencreative_daemon::run(None) {
-                        log::error!("embedded daemon: {e:#}");
-                        *errors.lock().expect("lock") = Some(format!("{e:#}"));
-                    }
-                });
-                self.link = Link::Embedded;
-            }
-            Ok(None) => {}
             Err(e) => self.link = Link::Unavailable(e.to_string()),
+        }
+    }
+
+    /// No daemon is running: run one here so the device still has an owner.
+    fn start_embedded(&mut self) {
+        match opencreative_daemon::spawn(None) {
+            Ok(daemon) => {
+                self.embedded = Some(daemon);
+                self.link = Link::Embedded;
+                self.next_poll = Instant::now();
+            }
+            Err(e) => self.link = Link::Unavailable(format!("{e:#}")),
+        }
+    }
+
+    /// Releases the device and socket held by the in-window daemon.
+    fn stop_embedded(&mut self) {
+        self.client = None;
+        if let Some(daemon) = self.embedded.take()
+            && let Err(e) = daemon.stop()
+        {
+            self.fail(format!("stopping the in-window service: {e:#}"));
         }
     }
 
@@ -267,6 +382,98 @@ impl App {
             }
         }
         self.send(Request::SetScene { scene });
+    }
+
+    fn enable_service(&mut self) {
+        // The service's daemon needs the device and socket this window holds.
+        self.stop_embedded();
+        match service::enable() {
+            Ok(()) => {
+                self.link = Link::WaitingForService(Instant::now() + SERVICE_START_TIMEOUT);
+                self.message = Some(("Background service started.".into(), false));
+            }
+            Err(e) => {
+                self.link = Link::Connecting;
+                self.fail(format!("starting the background service: {e}"));
+            }
+        }
+        self.service = Some(service::query());
+        self.next_poll = Instant::now();
+    }
+
+    fn disable_service(&mut self) {
+        match service::disable() {
+            Ok(()) => {
+                self.client = None;
+                self.link = Link::Connecting;
+                self.message = Some((
+                    "Background service stopped; this window drives the screen while open.".into(),
+                    false,
+                ));
+            }
+            Err(e) => self.fail(format!("stopping the background service: {e}")),
+        }
+        self.service = Some(service::query());
+        // Give the service a moment to release the device.
+        self.next_poll = Instant::now() + Duration::from_millis(500);
+    }
+
+    fn run_task(
+        &mut self,
+        ctx: &egui::Context,
+        label: &'static str,
+        job: fn() -> service::Result<()>,
+    ) {
+        let (tx, rx) = mpsc::channel();
+        let ctx = ctx.clone();
+        thread::spawn(move || {
+            let _ = tx.send((label, job()));
+            ctx.request_repaint();
+        });
+        self.task = Some(rx);
+    }
+
+    fn browse_for_image(&mut self, ctx: &egui::Context) {
+        let (tx, rx) = mpsc::channel();
+        let ctx = ctx.clone();
+        thread::spawn(move || {
+            let dialog = rfd::AsyncFileDialog::new()
+                .set_title("Choose an image or GIF")
+                .add_filter("Images", &IMAGE_EXTENSIONS);
+            let picked = pollster::block_on(dialog.pick_file()).map(|f| f.path().to_owned());
+            let _ = tx.send(picked);
+            ctx.request_repaint();
+        });
+        self.picking_file = Some(rx);
+    }
+
+    /// Collects results from the file dialog and background tasks.
+    fn poll_background(&mut self) {
+        if let Some(rx) = &self.picking_file {
+            match rx.try_recv() {
+                Ok(Some(path)) => {
+                    self.draft.kind = Kind::Image;
+                    self.draft.image = path.display().to_string();
+                    self.picking_file = None;
+                }
+                Ok(None) | Err(TryRecvError::Disconnected) => self.picking_file = None,
+                Err(TryRecvError::Empty) => {}
+            }
+        }
+        if let Some(rx) = &self.task {
+            match rx.try_recv() {
+                Ok((label, Ok(()))) => {
+                    self.message = Some((format!("{label}: done."), false));
+                    self.task = None;
+                }
+                Ok((label, Err(e))) => {
+                    self.task = None;
+                    self.fail(format!("{label}: {e}"));
+                }
+                Err(TryRecvError::Disconnected) => self.task = None,
+                Err(TryRecvError::Empty) => {}
+            }
+        }
     }
 
     fn handle_dropped_files(&mut self, ctx: &egui::Context) {
@@ -334,14 +541,16 @@ impl App {
                 }
             }
         }
-        let until_frame = p.next_frame.saturating_duration_since(now);
-        let until_poll = self.next_poll.saturating_duration_since(now);
-        ctx.request_repaint_after(until_frame.min(until_poll));
+        ctx.request_repaint_after(p.next_frame.saturating_duration_since(now));
     }
 
-    fn status_bar(&self, ui: &mut egui::Ui) {
+    fn status_bar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             ui.heading("OpenCreative");
+            ui.separator();
+            ui.selectable_value(&mut self.tab, Tab::Screen, "Screen");
+            ui.selectable_value(&mut self.tab, Tab::Sensors, "Sensors");
+            ui.selectable_value(&mut self.tab, Tab::Service, "Service");
             ui.separator();
             match &self.device {
                 Some(name) => ui.colored_label(egui::Color32::LIGHT_GREEN, format!("● {name}")),
@@ -350,15 +559,26 @@ impl App {
             ui.separator();
             match &self.link {
                 Link::Connecting => ui.label("connecting…"),
+                Link::WaitingForService(_) => ui.label("starting background service…"),
                 Link::External => ui.label("background service running"),
-                Link::Embedded => ui.label("service running in this window — the screen stops updating when it closes")
-                    .on_hover_text("Enable the systemd service to keep the screen updated:\nsystemctl --user enable --now opencreative"),
-                Link::Unavailable(e) => ui.colored_label(egui::Color32::LIGHT_RED, format!("service unavailable: {e}")),
+                Link::Embedded => ui
+                    .colored_label(
+                        egui::Color32::from_rgb(0xfb, 0xbf, 0x24),
+                        "running in this window only",
+                    )
+                    .on_hover_text(
+                        "The screen stops updating when this window closes. \
+                         Turn on the background service in the Service tab.",
+                    ),
+                Link::Unavailable(e) => ui.colored_label(
+                    egui::Color32::LIGHT_RED,
+                    format!("service unavailable: {e}"),
+                ),
             };
         });
     }
 
-    fn controls(&mut self, ui: &mut egui::Ui) {
+    fn screen_controls(&mut self, ui: &mut egui::Ui) {
         ui.heading("Screen");
         ui.horizontal(|ui| {
             ui.radio_value(&mut self.draft.kind, Kind::Monitor, "System monitor");
@@ -375,10 +595,20 @@ impl App {
             }
             Kind::Image => {
                 ui.label("File (or drop one onto the window):");
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.draft.image)
-                        .hint_text("/path/to/image.gif"),
-                );
+                ui.horizontal(|ui| {
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.draft.image)
+                            .hint_text("/path/to/image.gif")
+                            .desired_width(220.0),
+                    );
+                    let browsing = self.picking_file.is_some();
+                    if ui
+                        .add_enabled(!browsing, egui::Button::new("Browse…"))
+                        .clicked()
+                    {
+                        self.browse_for_image(ui.ctx());
+                    }
+                });
                 egui::ComboBox::from_label("Fit")
                     .selected_text(fit_label(self.draft.fit))
                     .show_ui(ui, |ui| {
@@ -444,7 +674,7 @@ impl App {
         }
     }
 
-    fn preview(&mut self, ui: &mut egui::Ui) {
+    fn preview_panel(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             ui.heading("Preview");
             ui.checkbox(&mut self.preview.accurate, "Device-accurate colors")
@@ -466,6 +696,78 @@ impl App {
             ui.colored_label(egui::Color32::LIGHT_RED, e);
         }
     }
+
+    fn service_panel(&mut self, ui: &mut egui::Ui) {
+        if !SERVICE_SUPPORTED {
+            ui.heading("Background service");
+            ui.label("Managing the background service from here is Linux-only for now.");
+            return;
+        }
+        let ctx = ui.ctx().clone();
+        let busy = self.task.is_some();
+
+        ui.heading("Background service");
+        ui.label(
+            "Keeps the cooler's screen updated when this window is closed, \
+             starting at login (a systemd user service).",
+        );
+        let state = self.service.unwrap_or_else(service::query);
+        ui.label(match (state.enabled, state.active) {
+            (_, true) => "● Running",
+            (true, false) => "○ Enabled, but not running",
+            (false, false) => "○ Off",
+        });
+        if state.enabled {
+            if ui.button("Turn off background service").clicked() {
+                self.disable_service();
+            }
+        } else if ui.button("Run in the background").clicked() {
+            self.enable_service();
+        }
+
+        ui.add_space(12.0);
+        ui.separator();
+        ui.heading("USB access");
+        if service::udev_rule_installed() {
+            ui.label("✓ The USB rule is installed: OpenCreative can use the cooler without root.");
+        } else {
+            ui.label(
+                "OpenCreative needs a udev rule to use the cooler without root. \
+                 Installing it asks for your password.",
+            );
+            if ui
+                .add_enabled(!busy, egui::Button::new("Install USB rule"))
+                .clicked()
+            {
+                self.run_task(&ctx, "Installing the USB rule", service::install_udev_rule);
+            }
+            ui.label("Or run this in a terminal:");
+            let command = service::udev_install_command();
+            ui.horizontal(|ui| {
+                ui.code(&command);
+                if ui.small_button("Copy").clicked() {
+                    ctx.copy_text(command.clone());
+                }
+            });
+        }
+
+        ui.add_space(12.0);
+        ui.separator();
+        ui.heading("App menu");
+        if service::desktop_entry_installed() {
+            ui.label("✓ OpenCreative is in your app menu.");
+            if ui.button("Remove from app menu").clicked()
+                && let Err(e) = service::remove_desktop_entry()
+            {
+                self.fail(e);
+            }
+        } else if ui.button("Add to app menu").clicked() {
+            match service::install_desktop_entry() {
+                Ok(()) => self.message = Some(("Added to the app menu.".into(), false)),
+                Err(e) => self.fail(e),
+            }
+        }
+    }
 }
 
 fn fit_label(fit: FitConfig) -> &'static str {
@@ -480,8 +782,14 @@ impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         self.poll();
+        self.poll_background();
         self.handle_dropped_files(&ctx);
-        self.update_preview(&ctx);
+        if self.tab == Tab::Screen {
+            self.update_preview(&ctx);
+        }
+        let until_sample = self.history.tick();
+        let until_poll = self.next_poll.saturating_duration_since(Instant::now());
+        ctx.request_repaint_after(until_sample.min(until_poll));
 
         egui::Panel::top("status").show(ui, |ui| self.status_bar(ui));
         egui::Panel::bottom("message").show(ui, |ui| match &self.message {
@@ -489,11 +797,27 @@ impl eframe::App for App {
             Some((text, false)) => ui.label(text),
             None => ui.label(""),
         });
-        egui::Panel::left("controls")
-            .resizable(false)
-            .exact_size(340.0)
-            .show(ui, |ui| self.controls(ui));
-        egui::CentralPanel::default().show(ui, |ui| self.preview(ui));
+        match self.tab {
+            Tab::Screen => {
+                egui::Panel::left("controls")
+                    .resizable(false)
+                    .exact_size(360.0)
+                    .show(ui, |ui| self.screen_controls(ui));
+                egui::CentralPanel::default().show(ui, |ui| self.preview_panel(ui));
+            }
+            Tab::Sensors => {
+                egui::CentralPanel::default().show(ui, |ui| self.history.ui(ui));
+            }
+            Tab::Service => {
+                egui::CentralPanel::default().show(ui, |ui| self.service_panel(ui));
+            }
+        }
+    }
+
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        // Release the device and remove the socket instead of leaving them
+        // to process exit.
+        self.stop_embedded();
     }
 }
 
@@ -515,5 +839,11 @@ mod tests {
         ] {
             assert_eq!(Draft::from_scene(&scene).to_scene(), scene);
         }
+    }
+
+    #[test]
+    fn window_icon_has_the_right_size() {
+        let icon = window_icon();
+        assert_eq!(icon.rgba.len(), (icon.width * icon.height * 4) as usize);
     }
 }
