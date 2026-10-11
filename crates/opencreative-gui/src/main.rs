@@ -22,7 +22,7 @@ use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use eframe::egui::{self, Align2, Color32, Frame, Margin, Sense, Stroke, vec2};
+use eframe::egui::{self, Align2, Color32, Frame, Margin, Sense, Stroke, pos2, vec2};
 use opencreative_config::{Config, Rgb, SceneConfig};
 use opencreative_core::Player;
 use opencreative_daemon::Daemon;
@@ -44,7 +44,8 @@ const SERVICE_START_TIMEOUT: Duration = Duration::from_secs(10);
 const DEVICE_SCAN: Duration = Duration::from_secs(3);
 const TOAST_FOR: Duration = Duration::from_secs(4);
 const IMAGE_EXTENSIONS: [&str; 6] = ["png", "jpg", "jpeg", "gif", "webp", "bmp"];
-const RAIL_WIDTH: f32 = 72.0;
+const SIDEBAR_WIDTH: f32 = 212.0;
+const TITLE_HEIGHT: f32 = 40.0;
 
 fn main() -> eframe::Result {
     env_logger::Builder::from_env(
@@ -57,7 +58,9 @@ fn main() -> eframe::Result {
             .with_app_id("opencreative")
             .with_icon(window_icon())
             .with_inner_size(window_size())
-            .with_min_inner_size([960.0, 680.0]),
+            .with_min_inner_size([1000.0, 680.0])
+            // The app draws its own title bar.
+            .with_decorations(false),
         ..Default::default()
     };
     eframe::run_native(
@@ -269,6 +272,7 @@ pub struct App {
 impl App {
     fn new(cc: &eframe::CreationContext<'_>) -> Self {
         theme::install(&cc.egui_ctx);
+        egui_extras::install_image_loaders(&cc.egui_ctx);
         let mut prefs = prefs::load();
         // For screenshots: show the integration without saving the choice.
         if std::env::var_os("OPENCREATIVE_CLAUDE").is_some() {
@@ -729,116 +733,237 @@ impl App {
             .id()
     }
 
-    /// The navigation rail on the left, like the vendor app's.
-    fn rail(&mut self, ui: &mut egui::Ui) {
+    /// A device's display name. The LM240 and LM360 share a USB ID, so the
+    /// model comes from the user's choice on the Devices page.
+    pub fn device_title<'a>(&self, name: &'a str) -> &'a str {
+        if !name.contains("LM Series") {
+            return name;
+        }
+        match self.prefs.model {
+            prefs::Model::Lm240 => "DeepCool LM240",
+            prefs::Model::Lm360 => "DeepCool LM360",
+        }
+    }
+
+    /// What the app is doing, as a dot color and a sentence for its tooltip.
+    fn status(&self, p: &Palette) -> (Color32, &'static str) {
+        match (&self.link, &self.device) {
+            (Link::Unavailable(_), _) => (p.bad, "The background service is unavailable"),
+            (Link::Connecting | Link::WaitingForService(_), _) => (p.faint, "Connecting…"),
+            (_, None) => (p.faint, "No cooler connected"),
+            (_, Some(_)) if !self.screen_on => (p.faint, "The cooler's screen is off"),
+            (_, Some(_)) if self.zen => (p.accent, "Zen mode is on"),
+            (Link::External, Some(_)) => (
+                p.good,
+                "Running in the background: the screen keeps updating when this window is closed",
+            ),
+            (Link::Embedded, Some(_)) => (
+                p.warn,
+                "Running in this window: the screen stops updating when it closes",
+            ),
+        }
+    }
+
+    /// The custom title bar: drag to move, double-click to maximize, the
+    /// status dot and window buttons on the right.
+    fn title_bar(&mut self, ui: &mut egui::Ui) {
         let p = Palette::of(ui.ctx());
+        let rect = ui.max_rect();
+        let drag = ui.interact(rect, egui::Id::new("title-drag"), Sense::click_and_drag());
+        let maximized = ui.input(|i| i.viewport().maximized.unwrap_or(false));
+        if drag.drag_started_by(egui::PointerButton::Primary) {
+            ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
+        }
+        if drag.double_clicked() {
+            ui.ctx()
+                .send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
+        }
         let logo = self.logo(ui.ctx());
-        ui.vertical_centered(|ui| {
+        ui.horizontal_centered(|ui| {
             ui.add_space(14.0);
-            ui.add(egui::Image::new((logo, vec2(36.0, 36.0))));
-            ui.add_space(18.0);
-            for (page, icon, label) in [
-                (Page::Dashboard, Icon::Dashboard, "Dashboard"),
-                (Page::Devices, Icon::Devices, "Devices"),
-                (Page::Device, Icon::Cooler, "Cooler screen"),
-            ] {
-                self.rail_item(ui, &p, page, icon, label);
-            }
-        });
-        ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui| {
-            ui.add_space(12.0);
-            self.rail_item(ui, &p, Page::Settings, Icon::Settings, "Settings");
+            ui.add(egui::Image::new((logo, vec2(20.0, 20.0))));
+            ui.add_space(2.0);
+            ui.label(
+                egui::RichText::new("OpenCreative")
+                    .font(theme::semibold(13.0))
+                    .color(p.text),
+            );
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.spacing_mut().item_spacing.x = 0.0;
+                if window_button(ui, Icon::Close, true).clicked() {
+                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                }
+                let (icon, tip) = if maximized {
+                    (Icon::Restore, "Restore")
+                } else {
+                    (Icon::Maximize, "Maximize")
+                };
+                if window_button(ui, icon, false).on_hover_text(tip).clicked() {
+                    ui.ctx()
+                        .send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
+                }
+                if window_button(ui, Icon::Minimize, false)
+                    .on_hover_text("Minimize")
+                    .clicked()
+                {
+                    ui.ctx()
+                        .send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+                }
+                ui.add_space(10.0);
+                let (color, text) = self.status(&p);
+                let (dot, response) = ui.allocate_exact_size(vec2(22.0, 22.0), Sense::click());
+                if response.hovered() {
+                    ui.painter().circle_filled(dot.center(), 10.0, p.raised);
+                }
+                ui.painter()
+                    .circle_filled(dot.center(), 6.0, color.gamma_multiply(0.25));
+                ui.painter().circle_filled(dot.center(), 3.5, color);
+                if response
+                    .on_hover_text(format!("{text}. Click for service settings."))
+                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                    .clicked()
+                {
+                    self.page = Page::Settings;
+                }
+            });
         });
     }
 
-    fn rail_item(&mut self, ui: &mut egui::Ui, p: &Palette, page: Page, icon: Icon, label: &str) {
-        let (rect, response) = ui.allocate_exact_size(vec2(RAIL_WIDTH, 52.0), Sense::click());
+    /// Navigation with labels, plus the connected cooler.
+    fn sidebar(&mut self, ui: &mut egui::Ui) {
+        let p = Palette::of(ui.ctx());
+        ui.add_space(14.0);
+        ui.spacing_mut().item_spacing.y = 2.0;
+        for (page, icon, label) in [
+            (Page::Dashboard, Icon::Dashboard, "Dashboard"),
+            (Page::Devices, Icon::Devices, "Devices"),
+            (Page::Device, Icon::Cooler, "Cooler screen"),
+        ] {
+            self.nav_item(ui, &p, page, icon, label);
+        }
+        ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
+            ui.add_space(12.0);
+            self.nav_item(ui, &p, Page::Settings, Icon::Settings, "Settings");
+            ui.add_space(8.0);
+            if let Some(device) = self.device.clone() {
+                let device = self.device_title(&device).to_owned();
+                ui.horizontal(|ui| {
+                    ui.add_space(20.0);
+                    ui.label(egui::RichText::new(device).small().color(p.faint));
+                });
+            }
+        });
+    }
+
+    fn nav_item(&mut self, ui: &mut egui::Ui, p: &Palette, page: Page, icon: Icon, label: &str) {
+        let width = ui.available_width();
+        let (outer, response) = ui.allocate_exact_size(vec2(width, 38.0), Sense::click());
+        let rect = outer.shrink2(vec2(10.0, 1.0));
         let selected = self.page == page;
         let painter = ui.painter();
-        if response.hovered() && !selected {
-            painter.rect_filled(rect.shrink2(vec2(12.0, 4.0)), 8.0, p.accent_soft);
-        }
         if selected {
-            let bar = egui::Rect::from_min_size(
-                rect.left_top() + vec2(0.0, 12.0),
-                vec2(3.0, rect.height() - 24.0),
+            painter.rect_filled(rect, 8.0, p.raised);
+            let bar = egui::Rect::from_center_size(
+                pos2(rect.left() + 1.5, rect.center().y),
+                vec2(3.0, 16.0),
             );
             painter.rect_filled(bar, 2.0, p.accent);
+        } else if response.hovered() {
+            painter.rect_filled(rect, 8.0, p.raised.gamma_multiply(0.6));
         }
-        let color = if selected { p.accent } else { p.muted };
+        let color = if selected { p.text } else { p.muted };
+        let icon_rect = egui::Rect::from_center_size(
+            pos2(rect.left() + 22.0, rect.center().y),
+            vec2(18.0, 18.0),
+        );
         icons::paint(
-            painter,
-            egui::Rect::from_center_size(rect.center(), vec2(24.0, 24.0)),
+            ui,
+            icon_rect,
             icon,
+            if selected { p.accent } else { p.muted },
+        );
+        ui.painter().text(
+            pos2(rect.left() + 42.0, rect.center().y),
+            Align2::LEFT_CENTER,
+            label,
+            if selected {
+                theme::medium(14.0)
+            } else {
+                theme::regular(14.0)
+            },
             color,
         );
-        if response.on_hover_text(label).clicked() {
+        if response
+            .on_hover_cursor(egui::CursorIcon::PointingHand)
+            .clicked()
+        {
             self.page = page;
         }
     }
 
-    /// The status chip in the bottom-right corner, plus transient messages.
-    fn status_pill(&mut self, ctx: &egui::Context) {
+    /// Transient messages in the bottom-right corner.
+    fn toasts(&mut self, ctx: &egui::Context) {
         let p = Palette::of(ctx);
-        let (text, dot) = match (&self.link, &self.device) {
-            (Link::Unavailable(_), _) => ("Service unavailable", p.bad),
-            (Link::Connecting | Link::WaitingForService(_), _) => ("Connecting…", p.faint),
-            (_, None) => ("No cooler connected", p.faint),
-            (_, Some(_)) if !self.screen_on => ("Screen off", p.faint),
-            (_, Some(_)) if self.zen => ("Zen mode", p.accent),
-            (Link::External, Some(_)) => ("Running in background", p.good),
-            (Link::Embedded, Some(_)) => ("Running in this window", p.warn),
-        };
-        let toast = self
+        let Some((text, error)) = self
             .toast
             .as_ref()
             .filter(|t| t.since.elapsed() < TOAST_FOR)
-            .map(|t| (t.text.clone(), t.error));
-        egui::Area::new(egui::Id::new("status-pill"))
-            .anchor(Align2::RIGHT_BOTTOM, vec2(-18.0, -18.0))
+            .map(|t| (t.text.clone(), t.error))
+        else {
+            return;
+        };
+        egui::Area::new(egui::Id::new("toast"))
+            .anchor(Align2::RIGHT_BOTTOM, vec2(-20.0, -20.0))
             .order(egui::Order::Foreground)
             .show(ctx, |ui| {
-                ui.with_layout(egui::Layout::top_down(egui::Align::Max), |ui| {
-                    if let Some((text, error)) = &toast {
-                        Frame::new()
-                            .fill(if *error {
-                                p.bad
-                            } else {
-                                Color32::from_rgb(0x1f, 0x29, 0x37)
-                            })
-                            .corner_radius(8)
-                            .inner_margin(Margin::symmetric(14, 10))
-                            .show(ui, |ui| {
-                                ui.set_max_width(420.0);
-                                ui.label(egui::RichText::new(text).color(Color32::WHITE));
-                            });
-                        ui.add_space(8.0);
-                    }
-                    let pill = Frame::new()
-                        .fill(Color32::from_rgb(0x1f, 0x29, 0x37))
-                        .corner_radius(20)
-                        .inner_margin(Margin::symmetric(16, 9))
-                        .show(ui, |ui| {
-                            ui.horizontal(|ui| {
-                                ui.label(
-                                    egui::RichText::new(text)
-                                        .font(theme::medium(13.0))
-                                        .color(Color32::WHITE),
-                                );
-                                let (dot_rect, _) =
-                                    ui.allocate_exact_size(vec2(10.0, 10.0), Sense::hover());
-                                ui.painter().circle_filled(dot_rect.center(), 4.5, dot);
-                            });
-                        })
-                        .response
-                        .interact(Sense::click());
-                    if pill.on_hover_text("Service settings").clicked() {
-                        self.page = Page::Settings;
-                    }
-                });
+                Frame::new()
+                    .fill(p.raised)
+                    .stroke(Stroke::new(1.0, if error { p.bad } else { p.border }))
+                    .corner_radius(10)
+                    .inner_margin(Margin::symmetric(14, 10))
+                    .show(ui, |ui| {
+                        ui.set_max_width(420.0);
+                        ui.horizontal(|ui| {
+                            let (dot, _) = ui.allocate_exact_size(vec2(8.0, 8.0), Sense::hover());
+                            ui.painter().circle_filled(
+                                dot.center(),
+                                3.5,
+                                if error { p.bad } else { p.accent },
+                            );
+                            ui.label(egui::RichText::new(text).color(p.text));
+                        });
+                    });
             });
-        if toast.is_some() {
-            ctx.request_repaint_after(Duration::from_millis(500));
+        ctx.request_repaint_after(Duration::from_millis(500));
+    }
+
+    /// Without the system frame, the window's edges resize it.
+    fn resize_edges(&self, ctx: &egui::Context) {
+        const EDGE: f32 = 6.0;
+        if ctx.input(|i| i.viewport().maximized.unwrap_or(false)) {
+            return;
+        }
+        let screen = ctx.content_rect();
+        let Some(pos) = ctx.pointer_hover_pos() else {
+            return;
+        };
+        let (l, r) = (pos.x - screen.left() < EDGE, screen.right() - pos.x < EDGE);
+        let (t, b) = (pos.y - screen.top() < EDGE, screen.bottom() - pos.y < EDGE);
+        use egui::ResizeDirection as D;
+        let (dir, cursor) = match (l, r, t, b) {
+            (true, _, true, _) => (D::NorthWest, egui::CursorIcon::ResizeNorthWest),
+            (_, true, true, _) => (D::NorthEast, egui::CursorIcon::ResizeNorthEast),
+            (true, _, _, true) => (D::SouthWest, egui::CursorIcon::ResizeSouthWest),
+            (_, true, _, true) => (D::SouthEast, egui::CursorIcon::ResizeSouthEast),
+            (true, ..) => (D::West, egui::CursorIcon::ResizeWest),
+            (_, true, ..) => (D::East, egui::CursorIcon::ResizeEast),
+            (_, _, true, _) => (D::North, egui::CursorIcon::ResizeNorth),
+            (_, _, _, true) => (D::South, egui::CursorIcon::ResizeSouth),
+            _ => return,
+        };
+        ctx.set_cursor_icon(cursor);
+        if ctx.input(|i| i.pointer.primary_pressed()) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::BeginResize(dir));
         }
     }
 
@@ -902,6 +1027,30 @@ fn default_media_scene() -> SceneConfig {
     }
 }
 
+/// A title-bar button: an icon on a square that lights up on hover (red
+/// for close).
+fn window_button(ui: &mut egui::Ui, icon: Icon, close: bool) -> egui::Response {
+    let p = Palette::of(ui.ctx());
+    let (rect, response) = ui.allocate_exact_size(vec2(44.0, TITLE_HEIGHT), Sense::click());
+    let hovered = response.hovered();
+    if hovered {
+        let fill = if close { p.bad } else { p.raised };
+        ui.painter().rect_filled(rect, 0.0, fill);
+    }
+    let color = if hovered && close {
+        Color32::WHITE
+    } else {
+        p.muted
+    };
+    icons::paint(
+        ui,
+        egui::Rect::from_center_size(rect.center(), vec2(15.0, 15.0)),
+        icon,
+        color,
+    );
+    response
+}
+
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
@@ -923,13 +1072,23 @@ impl eframe::App for App {
         self.handle_screenshot(&ctx);
 
         let p = Palette::of(&ctx);
-        egui::Panel::left("rail")
+        self.resize_edges(&ctx);
+        egui::Panel::top("title-bar")
             .resizable(false)
-            .exact_size(RAIL_WIDTH)
-            .frame(Frame::new().fill(p.card).stroke(Stroke::new(1.0, p.border)))
-            .show(ui, |ui| self.rail(ui));
+            .exact_size(TITLE_HEIGHT)
+            .frame(Frame::new().fill(p.sidebar))
+            .show(ui, |ui| self.title_bar(ui));
+        egui::Panel::left("sidebar")
+            .resizable(false)
+            .exact_size(SIDEBAR_WIDTH)
+            .frame(
+                Frame::new()
+                    .fill(p.sidebar)
+                    .stroke(Stroke::new(1.0, p.border)),
+            )
+            .show(ui, |ui| self.sidebar(ui));
         egui::CentralPanel::default()
-            .frame(Frame::new().fill(p.bg).inner_margin(Margin::same(24)))
+            .frame(Frame::new().fill(p.bg).inner_margin(Margin::same(28)))
             .show(ui, |ui| {
                 egui::ScrollArea::vertical()
                     .auto_shrink([false, false])
@@ -940,7 +1099,27 @@ impl eframe::App for App {
                         Page::Settings => pages::settings::show(self, ui),
                     });
             });
-        self.status_pill(&ctx);
+        self.toasts(&ctx);
+        // Without the system frame: a hairline under the title bar and
+        // around the window.
+        let painter = ctx.layer_painter(egui::LayerId::new(
+            egui::Order::Foreground,
+            egui::Id::new("window-frame"),
+        ));
+        let screen = ctx.content_rect();
+        painter.hline(
+            screen.x_range(),
+            screen.top() + TITLE_HEIGHT - 0.5,
+            Stroke::new(1.0, p.border),
+        );
+        if !ctx.input(|i| i.viewport().maximized.unwrap_or(false)) {
+            painter.rect_stroke(
+                screen.shrink(0.5),
+                0.0,
+                Stroke::new(1.0, p.border),
+                egui::StrokeKind::Inside,
+            );
+        }
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {

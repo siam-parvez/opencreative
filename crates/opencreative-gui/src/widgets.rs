@@ -4,7 +4,7 @@
 use std::f32::consts::PI;
 
 use eframe::egui::{
-    self, Align2, Color32, CornerRadius, Rect, Response, Sense, Stroke, StrokeKind, pos2, vec2,
+    self, Align2, Color32, CornerRadius, Rect, Response, Sense, Stroke, pos2, vec2,
 };
 
 use crate::theme::{self, Palette};
@@ -51,14 +51,11 @@ pub fn segmented<T: PartialEq + Copy>(
                 }
                 for (option, label) in ordered {
                     let selected = *value == *option;
-                    let text = egui::RichText::new(*label).color(if selected {
-                        Color32::WHITE
-                    } else {
-                        p.text
-                    });
+                    let text =
+                        egui::RichText::new(*label).color(if selected { p.text } else { p.muted });
                     let button = egui::Button::new(text)
                         .fill(if selected {
-                            p.accent
+                            p.raised
                         } else {
                             Color32::TRANSPARENT
                         })
@@ -104,8 +101,8 @@ pub fn stat(ui: &mut egui::Ui, value: &str, label: &str) {
         ui.add(
             egui::Label::new(
                 egui::RichText::new(value)
-                    .font(theme::semibold(17.0))
-                    .color(p.accent),
+                    .font(theme::medium(16.0))
+                    .color(p.text),
             )
             .extend(),
         );
@@ -120,7 +117,8 @@ pub fn stat(ui: &mut egui::Ui, value: &str, label: &str) {
     });
 }
 
-/// A 270-degree gauge, open at the bottom, with a big centered value.
+/// A 270-degree gauge, open at the bottom. The value sits on the circle's
+/// center with the caption below it, inside the arc.
 pub fn gauge(
     ui: &mut egui::Ui,
     diameter: f32,
@@ -128,16 +126,17 @@ pub fn gauge(
     value: &str,
     unit: &str,
     caption: &str,
-    ends: (&str, &str),
+    color: Color32,
 ) {
     let p = Palette::of(ui.ctx());
-    let (rect, _) = ui.allocate_exact_size(vec2(diameter, diameter * 0.86), Sense::hover());
+    let (rect, _) = ui.allocate_exact_size(vec2(diameter, diameter * 0.88), Sense::hover());
     let painter = ui.painter();
     let center = pos2(rect.center().x, rect.top() + diameter / 2.0);
-    let radius = diameter / 2.0 - 8.0;
+    let width = (diameter * 0.055).max(6.0);
+    let radius = diameter / 2.0 - width;
     let (start, sweep) = (0.75 * PI, 1.5 * PI);
-    let arc = |to: f32, color: Color32, width: f32| {
-        let n = 64;
+    let arc = |to: f32, color: Color32| {
+        let n = 96;
         let points: Vec<_> = (0..=n)
             .map(|i| {
                 let a = start + sweep * to * i as f32 / n as f32;
@@ -151,96 +150,87 @@ pub fn gauge(
         }
         painter.add(egui::Shape::line(points, Stroke::new(width, color)));
     };
-    arc(1.0, p.track, 9.0);
+    arc(1.0, p.track);
     let fraction = fraction.clamp(0.0, 1.0);
     if fraction > 0.005 {
-        arc(fraction, p.accent, 9.0);
+        arc(fraction, color);
+    }
+    if fraction > 0.04 {
+        // A soft glow at the tip.
+        let a = start + sweep * fraction;
+        let tip = center + radius * vec2(a.cos(), a.sin());
+        painter.circle_filled(tip, width * 1.1, color.gamma_multiply(0.18));
     }
 
-    painter.text(
-        center - vec2(0.0, diameter * 0.17),
-        Align2::CENTER_CENTER,
-        caption,
-        theme::regular(12.0),
-        p.muted,
-    );
-    let value_font = theme::medium(diameter * 0.27);
-    let unit_font = theme::regular(diameter * 0.09);
+    let value_font = theme::numeric(diameter * 0.2);
+    let unit_font = theme::regular(diameter * 0.085);
     let value_w = painter
         .layout_no_wrap(value.to_owned(), value_font.clone(), p.text)
         .size()
         .x;
-    let unit_w = painter
-        .layout_no_wrap(unit.to_owned(), unit_font.clone(), p.muted)
-        .size()
-        .x;
-    let left = center.x - (value_w + 3.0 + unit_w) / 2.0;
-    let baseline_y = center.y + diameter * 0.05;
+    let unit_w = if unit.is_empty() {
+        0.0
+    } else {
+        painter
+            .layout_no_wrap(unit.to_owned(), unit_font.clone(), p.muted)
+            .size()
+            .x
+            + 4.0
+    };
+    let left = center.x - (value_w + unit_w) / 2.0;
     painter.text(
-        pos2(left, baseline_y),
+        pos2(left, center.y),
         Align2::LEFT_CENTER,
         value,
         value_font,
         p.text,
     );
+    if !unit.is_empty() {
+        painter.text(
+            pos2(left + value_w + 4.0, center.y + diameter * 0.03),
+            Align2::LEFT_CENTER,
+            unit,
+            unit_font,
+            p.muted,
+        );
+    }
     painter.text(
-        pos2(left + value_w + 3.0, baseline_y + diameter * 0.07),
-        Align2::LEFT_CENTER,
-        unit,
-        unit_font,
+        pos2(center.x, center.y + radius * 0.5),
+        Align2::CENTER_CENTER,
+        caption,
+        theme::regular(12.0),
         p.muted,
-    );
-    let end_y = center.y + radius * 0.72;
-    painter.text(
-        pos2(center.x - radius * 0.95, end_y),
-        Align2::RIGHT_CENTER,
-        ends.0,
-        theme::regular(11.0),
-        p.faint,
-    );
-    painter.text(
-        pos2(center.x + radius * 0.95, end_y),
-        Align2::LEFT_CENTER,
-        ends.1,
-        theme::regular(11.0),
-        p.faint,
     );
 }
 
-/// A usage bar with diagonal hatching on the used part.
+/// A slim usage bar in the accent color.
 pub fn usage_bar(ui: &mut egui::Ui, fraction: f32, height: f32) {
     let accent = Palette::of(ui.ctx()).accent;
     usage_bar_colored(ui, fraction, height, accent);
 }
 
-/// A usage bar in a given color.
+/// A slim, rounded usage bar in a given color.
 pub fn usage_bar_colored(ui: &mut egui::Ui, fraction: f32, height: f32, color: Color32) {
     let p = Palette::of(ui.ctx());
     let width = ui.available_width();
+    let height = height.min(8.0);
     let (rect, _) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
-    let painter = ui.painter_at(rect.expand(1.0));
-    let radius = CornerRadius::same(3);
-    painter.rect_filled(rect, radius, p.card);
+    let painter = ui.painter();
+    let radius = CornerRadius::same((height / 2.0) as u8);
+    painter.rect_filled(rect, radius, p.track);
     let used = Rect::from_min_size(
         rect.min,
         vec2(rect.width() * fraction.clamp(0.0, 1.0), rect.height()),
     );
-    if used.width() > 0.5 {
-        let fill = color.gamma_multiply(0.55);
-        painter.rect_filled(used, radius, fill);
-        let hatch = painter.with_clip_rect(used);
-        let stroke = Stroke::new(1.0, color);
-        let step = 6.0;
-        let mut x = used.left() - used.height();
-        while x < used.right() {
-            hatch.line_segment(
-                [pos2(x, used.bottom()), pos2(x + used.height(), used.top())],
-                stroke,
-            );
-            x += step;
-        }
+    if used.width() >= height {
+        painter.rect_filled(used, radius, color);
+    } else if used.width() > 0.5 {
+        painter.circle_filled(
+            rect.left_center() + vec2(height / 2.0, 0.0),
+            height / 2.0,
+            color,
+        );
     }
-    painter.rect_stroke(rect, radius, Stroke::new(1.0, color), StrokeKind::Inside);
 }
 
 /// Formats bytes per second, e.g. `8.3 KB/s`.

@@ -1,5 +1,5 @@
-//! Look and feel: a light theme with a teal accent (and a dark variant),
-//! IBM Plex Sans, and card-based layout helpers.
+//! Look and feel: dark first, near-black surfaces with one cyan accent (and
+//! a light variant), IBM Plex Sans for text and Orbitron for readings.
 
 use std::sync::Arc;
 
@@ -26,40 +26,50 @@ pub struct Palette {
     pub bad: Color32,
     /// The device frame around the LCD preview.
     pub bezel: Color32,
+    /// The navigation sidebar and title bar.
+    pub sidebar: Color32,
+    /// Hovered and selected rows.
+    pub raised: Color32,
 }
 
 pub const LIGHT: Palette = Palette {
-    bg: Color32::from_rgb(0xf3, 0xf5, 0xf7),
+    bg: Color32::from_rgb(0xf2, 0xf3, 0xf5),
     card: Color32::from_rgb(0xff, 0xff, 0xff),
-    border: Color32::from_rgb(0xe4, 0xe8, 0xec),
-    text: Color32::from_rgb(0x1d, 0x23, 0x2b),
-    muted: Color32::from_rgb(0x6a, 0x73, 0x80),
-    faint: Color32::from_rgb(0x9a, 0xa3, 0xae),
-    accent: Color32::from_rgb(0x0d, 0x9b, 0x94),
-    accent_soft: Color32::from_rgb(0xe3, 0xf4, 0xf3),
-    track: Color32::from_rgb(0xe9, 0xec, 0xef),
-    control: Color32::from_rgb(0xf6, 0xf7, 0xf9),
-    good: Color32::from_rgb(0x22, 0xc5, 0x5e),
-    warn: Color32::from_rgb(0xf5, 0x9e, 0x0b),
-    bad: Color32::from_rgb(0xdc, 0x26, 0x26),
-    bezel: Color32::from_rgb(0x2a, 0x2e, 0x34),
+    border: Color32::from_rgb(0xe2, 0xe4, 0xe8),
+    text: Color32::from_rgb(0x15, 0x17, 0x1c),
+    muted: Color32::from_rgb(0x64, 0x69, 0x73),
+    faint: Color32::from_rgb(0x9a, 0x9f, 0xa8),
+    accent: Color32::from_rgb(0x08, 0x9b, 0xb0),
+    accent_soft: Color32::from_rgb(0xe2, 0xf4, 0xf7),
+    track: Color32::from_rgb(0xe8, 0xea, 0xee),
+    control: Color32::from_rgb(0xf4, 0xf5, 0xf7),
+    good: Color32::from_rgb(0x16, 0xa3, 0x6a),
+    warn: Color32::from_rgb(0xd9, 0x8a, 0x06),
+    bad: Color32::from_rgb(0xdc, 0x35, 0x3c),
+    bezel: Color32::from_rgb(0x1c, 0x1e, 0x22),
+    sidebar: Color32::from_rgb(0xfa, 0xfa, 0xfb),
+    raised: Color32::from_rgb(0xee, 0xf0, 0xf3),
 };
 
+/// Near-black surfaces, hairline borders and one cyan accent, matching the
+/// cooler-screen skins.
 pub const DARK: Palette = Palette {
-    bg: Color32::from_rgb(0x0f, 0x12, 0x17),
-    card: Color32::from_rgb(0x17, 0x1b, 0x22),
-    border: Color32::from_rgb(0x26, 0x2c, 0x35),
-    text: Color32::from_rgb(0xe6, 0xe9, 0xee),
-    muted: Color32::from_rgb(0x9b, 0xa4, 0xb0),
-    faint: Color32::from_rgb(0x6b, 0x74, 0x80),
-    accent: Color32::from_rgb(0x2d, 0xc4, 0xb6),
-    accent_soft: Color32::from_rgb(0x13, 0x2e, 0x2d),
-    track: Color32::from_rgb(0x2a, 0x30, 0x3a),
-    control: Color32::from_rgb(0x1e, 0x23, 0x2b),
-    good: Color32::from_rgb(0x34, 0xd3, 0x99),
-    warn: Color32::from_rgb(0xfb, 0xbf, 0x24),
-    bad: Color32::from_rgb(0xf8, 0x71, 0x71),
-    bezel: Color32::from_rgb(0x05, 0x06, 0x08),
+    bg: Color32::from_rgb(0x0b, 0x0c, 0x0f),
+    card: Color32::from_rgb(0x13, 0x15, 0x19),
+    border: Color32::from_rgb(0x22, 0x25, 0x2b),
+    text: Color32::from_rgb(0xec, 0xed, 0xf0),
+    muted: Color32::from_rgb(0x8b, 0x90, 0x99),
+    faint: Color32::from_rgb(0x5c, 0x61, 0x6a),
+    accent: Color32::from_rgb(0x2e, 0xd3, 0xe6),
+    accent_soft: Color32::from_rgb(0x10, 0x2a, 0x2f),
+    track: Color32::from_rgb(0x23, 0x26, 0x2c),
+    control: Color32::from_rgb(0x1a, 0x1c, 0x21),
+    good: Color32::from_rgb(0x3d, 0xdc, 0x97),
+    warn: Color32::from_rgb(0xf5, 0xb8, 0x41),
+    bad: Color32::from_rgb(0xf2, 0x55, 0x5a),
+    bezel: Color32::from_rgb(0x05, 0x05, 0x06),
+    sidebar: Color32::from_rgb(0x0e, 0x0f, 0x12),
+    raised: Color32::from_rgb(0x1b, 0x1e, 0x23),
 };
 
 impl Palette {
@@ -74,6 +84,7 @@ impl Palette {
 
 const MEDIUM: &str = "medium";
 const SEMIBOLD: &str = "semibold";
+const NUMERIC: &str = "numeric";
 
 pub fn regular(size: f32) -> FontId {
     FontId::new(size, FontFamily::Proportional)
@@ -87,10 +98,19 @@ pub fn semibold(size: f32) -> FontId {
     FontId::new(size, FontFamily::Name(SEMIBOLD.into()))
 }
 
+/// Orbitron, the cooler screen's face, for big readings.
+pub fn numeric(size: f32) -> FontId {
+    FontId::new(size, FontFamily::Name(NUMERIC.into()))
+}
+
 /// Installs fonts, text sizes and both light and dark visuals.
 pub fn install(ctx: &egui::Context) {
     let mut fonts = FontDefinitions::default();
-    let faces: [(&str, &'static [u8]); 3] = [
+    let faces: [(&str, &'static [u8]); 4] = [
+        (
+            NUMERIC,
+            include_bytes!("../../../assets/fonts/Orbitron.ttf"),
+        ),
         (
             "plex",
             include_bytes!("../../../assets/fonts/IBMPlexSans-Regular.ttf"),
@@ -129,6 +149,9 @@ pub fn install(ctx: &egui::Context) {
     fonts
         .families
         .insert(FontFamily::Name(SEMIBOLD.into()), family(SEMIBOLD));
+    fonts
+        .families
+        .insert(FontFamily::Name(NUMERIC.into()), family(NUMERIC));
     ctx.set_fonts(fonts);
 
     for (theme, palette) in [(Theme::Light, LIGHT), (Theme::Dark, DARK)] {
@@ -170,6 +193,7 @@ fn visuals(p: &Palette, dark: bool) -> Visuals {
     v.selection.bg_fill = p.accent;
     v.selection.stroke = Stroke::new(1.0, p.card);
     v.slider_trailing_fill = true;
+    v.handle_shape = egui::style::HandleShape::Circle;
     v.indent_has_left_vline = false;
     let radius = CornerRadius::same(6);
     v.window_corner_radius = CornerRadius::same(10);
@@ -189,15 +213,15 @@ fn visuals(p: &Palette, dark: bool) -> Visuals {
     v.widgets.inactive.weak_bg_fill = p.control;
     v.widgets.inactive.bg_stroke = Stroke::new(1.0, p.border);
     v.widgets.inactive.fg_stroke = Stroke::new(1.0, p.text);
-    v.widgets.hovered.weak_bg_fill = p.accent_soft;
-    v.widgets.hovered.bg_fill = p.accent_soft;
-    v.widgets.hovered.bg_stroke = Stroke::new(1.0, p.accent);
+    v.widgets.hovered.weak_bg_fill = p.raised;
+    v.widgets.hovered.bg_fill = p.raised;
+    v.widgets.hovered.bg_stroke = Stroke::new(1.0, p.border);
     v.widgets.hovered.fg_stroke = Stroke::new(1.5, p.text);
     v.widgets.active.weak_bg_fill = p.accent;
     v.widgets.active.bg_fill = p.accent;
     v.widgets.active.bg_stroke = Stroke::new(1.0, p.accent);
-    v.widgets.open.weak_bg_fill = p.accent_soft;
-    v.widgets.open.bg_stroke = Stroke::new(1.0, p.accent);
+    v.widgets.open.weak_bg_fill = p.raised;
+    v.widgets.open.bg_stroke = Stroke::new(1.0, p.border);
     v
 }
 
@@ -207,8 +231,8 @@ pub fn card<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
     Frame::new()
         .fill(p.card)
         .stroke(Stroke::new(1.0, p.border))
-        .corner_radius(10)
-        .inner_margin(Margin::same(18))
+        .corner_radius(12)
+        .inner_margin(Margin::same(20))
         .show(ui, |ui| {
             // Fill the column, so cards side by side line up.
             ui.set_width(ui.available_width());

@@ -57,8 +57,11 @@ pub fn setting_row(
     control: impl FnOnce(&mut egui::Ui),
 ) {
     let p = Palette::of(ui.ctx());
+    // Leave the control a fixed column so long descriptions wrap before it.
+    let text_width = (ui.available_width() - 140.0).max(200.0);
     ui.horizontal(|ui| {
         ui.vertical(|ui| {
+            ui.set_max_width(text_width);
             ui.spacing_mut().item_spacing.y = 2.0;
             ui.label(
                 egui::RichText::new(title)
