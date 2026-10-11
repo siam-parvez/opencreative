@@ -1,0 +1,17 @@
+[package]
+name = "opencreative-config"
+description = "Persistent OpenCreative settings (TOML)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+opencreative-core.workspace = true
+opencreative-render.workspace = true
+serde.workspace = true
+toml.workspace = true
+dirs.workspace = true
+thiserror.workspace = true

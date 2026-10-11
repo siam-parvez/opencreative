@@ -1,13 +1,18 @@
 //! `opencreative` command-line tool.
 
+mod daemon;
+
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand, ValueEnum};
+use opencreative_config::{FitConfig, Rgb, SceneConfig};
 use opencreative_core::{Player, Scene};
 use opencreative_device as device;
+use opencreative_ipc::{self as ipc, Request, Response};
 use opencreative_render::media::{self, Fit};
 use opencreative_render::{Rotation, monitor, rotate};
 use opencreative_sensors::Sensors;
@@ -24,8 +29,12 @@ struct Cli {
     serial: Option<String>,
 
     /// Rotate screen content clockwise to match how the pump is mounted.
-    #[arg(long, global = true, default_value_t = 0, value_parser = parse_rotation)]
-    rotate: u16,
+    #[arg(long, global = true, value_parser = parse_rotation)]
+    rotate: Option<u16>,
+
+    /// Use the device directly even if the daemon is running.
+    #[arg(long, global = true)]
+    no_daemon: bool,
 
     #[command(subcommand)]
     command: Command,
@@ -45,10 +54,7 @@ enum Command {
     /// Toggle the screen on/off.
     ScreenToggle,
     /// Fill the screen with one color, e.g. `#ff8800`.
-    Solid {
-        #[arg(value_parser = parse_hex_color)]
-        color: [u8; 3],
-    },
+    Solid { color: Rgb },
     /// Show an image. Animated GIFs loop until interrupted.
     Image {
         path: PathBuf,
@@ -69,6 +75,15 @@ enum Command {
         #[arg(short, long, global = true, default_value = "preview.png")]
         output: PathBuf,
     },
+    /// Show what the background daemon is doing.
+    Status,
+    /// Run in the background, owning the device. Other commands are sent to
+    /// it while it runs, and its settings persist in the config file.
+    Daemon {
+        /// Config file (default: the user's config directory).
+        #[arg(long)]
+        config: Option<PathBuf>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -88,13 +103,19 @@ enum FitArg {
     Stretch,
 }
 
-impl From<FitArg> for Fit {
+impl From<FitArg> for FitConfig {
     fn from(f: FitArg) -> Self {
         match f {
-            FitArg::Cover => Fit::Cover,
-            FitArg::Contain => Fit::Contain,
-            FitArg::Stretch => Fit::Stretch,
+            FitArg::Cover => FitConfig::Cover,
+            FitArg::Contain => FitConfig::Contain,
+            FitArg::Stretch => FitConfig::Stretch,
         }
+    }
+}
+
+impl From<FitArg> for Fit {
+    fn from(f: FitArg) -> Self {
+        FitConfig::from(f).into()
     }
 }
 
@@ -105,27 +126,40 @@ fn parse_rotation(s: &str) -> Result<u16, String> {
         .ok_or_else(|| "rotation must be 0, 90, 180 or 270".to_owned())
 }
 
-fn parse_hex_color(s: &str) -> Result<[u8; 3], String> {
-    let hex = s.trim_start_matches('#');
-    if hex.len() != 6 {
-        return Err("expected a color like #ff8800".to_owned());
-    }
-    let v = u32::from_str_radix(hex, 16).map_err(|_| format!("invalid hex color: {s}"))?;
-    Ok([(v >> 16) as u8, (v >> 8) as u8, v as u8])
-}
-
 fn main() -> Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     let cli = Cli::parse();
-    let rotation = Rotation::from_degrees(cli.rotate).expect("validated by clap");
+    let rotation = cli
+        .rotate
+        .map(|deg| Rotation::from_degrees(deg).expect("validated by clap"));
     let serial = cli.serial.as_deref();
 
     match cli.command {
         Command::List => list(),
         Command::Sensors => sensors(),
+        Command::Preview { what, output } => preview(what, &output, rotation.unwrap_or_default()),
+        Command::Daemon { config } => daemon::run(config),
+        Command::Status => status(connect_daemon(cli.no_daemon)?),
+        command => match connect_daemon(cli.no_daemon)? {
+            Some(client) => send_to_daemon(client, command, cli.rotate, serial),
+            None => run_direct(command, serial, rotation.unwrap_or_default()),
+        },
+    }
+}
+
+fn connect_daemon(disabled: bool) -> Result<Option<ipc::Client>> {
+    if disabled {
+        return Ok(None);
+    }
+    Ok(ipc::Client::connect(&ipc::default_socket_path())?)
+}
+
+/// Runs a screen command against the device directly.
+fn run_direct(command: Command, serial: Option<&str>, rotation: Rotation) -> Result<()> {
+    match command {
         Command::Brightness { percent } => Ok(device::open(serial)?.set_brightness(percent)?),
         Command::ScreenToggle => Ok(device::open(serial)?.screen_toggle()?),
-        Command::Solid { color } => play(Scene::Solid(color), serial, rotation),
+        Command::Solid { color } => play(Scene::Solid(color.0), serial, rotation),
         Command::Image { path, fit } => {
             let fit = fit.into();
             play(Scene::Media { path, fit }, serial, rotation)
@@ -137,7 +171,79 @@ fn main() -> Result<()> {
             let interval = Duration::from_secs_f64(interval);
             play(Scene::Monitor { interval }, serial, rotation)
         }
-        Command::Preview { what, output } => preview(what, &output, rotation),
+        _ => unreachable!("not a screen command"),
+    }
+}
+
+/// Hands a screen command to the running daemon, which owns the device.
+fn send_to_daemon(
+    mut client: ipc::Client,
+    command: Command,
+    rotate: Option<u16>,
+    serial: Option<&str>,
+) -> Result<()> {
+    if serial.is_some() {
+        log::warn!("--serial is ignored while the daemon runs; set `serial` in its config");
+    }
+    let mut requests = Vec::new();
+    if let Some(degrees) = rotate {
+        requests.push(Request::SetRotation { degrees });
+    }
+    requests.push(match command {
+        Command::Brightness { percent } => Request::SetBrightness { percent },
+        Command::ScreenToggle => Request::ScreenToggle,
+        Command::Solid { color } => Request::SetScene {
+            scene: SceneConfig::Solid { color },
+        },
+        Command::Image { path, fit } => {
+            // Fail here, not silently in the daemon, if the file won't load.
+            let (w, h) = default_logical_size(Rotation::R0);
+            media::load(&path, w, h, fit.into())
+                .with_context(|| format!("loading {}", path.display()))?;
+            // The daemon has its own working directory.
+            let path =
+                fs::canonicalize(&path).with_context(|| format!("resolving {}", path.display()))?;
+            let fit = fit.into();
+            Request::SetScene {
+                scene: SceneConfig::Image { path, fit },
+            }
+        }
+        Command::Monitor { interval } => Request::SetScene {
+            scene: SceneConfig::Monitor {
+                interval_secs: interval,
+            },
+        },
+        _ => unreachable!("not a screen command"),
+    });
+    for request in &requests {
+        match client.request(request)? {
+            Response::Ok => {}
+            Response::Error { message } => bail!("daemon: {message}"),
+            other => bail!("unexpected daemon response: {other:?}"),
+        }
+    }
+    println!("Sent to the OpenCreative daemon.");
+    Ok(())
+}
+
+fn status(client: Option<ipc::Client>) -> Result<()> {
+    let Some(mut client) = client else {
+        println!(
+            "No daemon running (socket {}).",
+            ipc::default_socket_path().display()
+        );
+        return Ok(());
+    };
+    match client.request(&Request::Status)? {
+        Response::Status(status) => {
+            println!(
+                "Device: {}",
+                status.device.as_deref().unwrap_or("not connected")
+            );
+            print!("{}", toml::to_string_pretty(&status.config)?);
+            Ok(())
+        }
+        other => bail!("unexpected daemon response: {other:?}"),
     }
 }
 
@@ -226,14 +332,6 @@ fn preview(what: PreviewWhat, output: &Path, rotation: Rotation) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn hex_colors() {
-        assert_eq!(parse_hex_color("#ff8800"), Ok([0xff, 0x88, 0x00]));
-        assert_eq!(parse_hex_color("00ff00"), Ok([0, 0xff, 0]));
-        assert!(parse_hex_color("#fff").is_err());
-        assert!(parse_hex_color("zzzzzz").is_err());
-    }
 
     #[test]
     fn rotations() {

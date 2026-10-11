@@ -1,7 +1,12 @@
 //! Scene playback shared by every frontend (CLI today; daemon and GUI next).
 //!
 //! A [`Player`] decides which frame to show next for a [`Scene`]; [`run`]
-//! keeps those frames on the device, reconnecting when it disappears.
+//! keeps those frames on the device, reconnecting when it disappears, and
+//! [`run_daemon`] does the same while taking [`Command`]s.
+
+mod daemon;
+
+pub use daemon::{Command, DaemonState, run_daemon};
 
 use std::path::PathBuf;
 use std::thread;
@@ -87,6 +92,10 @@ impl Player {
 
     pub fn scene(&self) -> &Scene {
         &self.scene
+    }
+
+    pub fn rotation(&self) -> Rotation {
+        self.rotation
     }
 
     /// Renders the next frame for a `panel_w` x `panel_h` panel.

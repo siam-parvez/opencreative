@@ -1,4 +1,5 @@
-# systemd *user* service that keeps the system monitor on the cooler screen.
+# systemd *user* service running the OpenCreative daemon, which owns the cooler
+# screen. While it runs, `opencreative` commands are sent to it.
 # Install:
 #   cp opencreative.service ~/.config/systemd/user/
 #   systemctl --user daemon-reload
@@ -8,7 +9,7 @@
 Description=OpenCreative cooler screen
 
 [Service]
-ExecStart=%h/.cargo/bin/opencreative monitor
+ExecStart=%h/.cargo/bin/opencreative daemon
 Restart=on-failure
 RestartSec=5
 
