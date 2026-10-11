@@ -8,6 +8,7 @@ mod daemon;
 
 pub use daemon::{Command, DaemonState, run_daemon};
 
+use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -43,6 +44,7 @@ pub enum Scene {
     /// Chosen readings in outlined panels, refreshed every `interval`.
     Panels {
         layout: panels::Layout,
+        skin: panels::Skin,
         interval: Duration,
     },
     /// A still image or animated GIF.
@@ -86,7 +88,12 @@ pub struct Player {
     sensors: Option<Sensors>,
     media: Option<LoadedMedia>,
     cursor: usize,
+    /// Recent readings, oldest first, for skins that chart them.
+    history: VecDeque<opencreative_sensors::Snapshot>,
 }
+
+/// How many readings a chart covers (a minute at the default rate).
+const HISTORY: usize = 60;
 
 impl Player {
     pub fn new(scene: Scene, rotation: Rotation) -> Self {
@@ -97,6 +104,7 @@ impl Player {
             sensors,
             media: None,
             cursor: 0,
+            history: VecDeque::with_capacity(HISTORY),
         }
     }
 
@@ -120,10 +128,20 @@ impl Player {
                     hold: Some(*interval),
                 })
             }
-            Scene::Panels { layout, interval } => {
+            Scene::Panels {
+                layout,
+                skin,
+                interval,
+            } => {
                 let snap = self.sensors.get_or_insert_with(Sensors::new).read();
+                if self.history.len() == HISTORY {
+                    self.history.pop_front();
+                }
+                self.history.push_back(snap.clone());
+                let history = self.history.make_contiguous();
+                let frame = panels::render(&snap, history, layout, *skin, w, h);
                 Ok(Output {
-                    frame: rotate(&panels::render(&snap, layout, w, h), self.rotation),
+                    frame: rotate(&frame, self.rotation),
                     hold: Some(*interval),
                 })
             }

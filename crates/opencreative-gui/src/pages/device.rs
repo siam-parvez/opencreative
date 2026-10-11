@@ -3,7 +3,10 @@
 //! right). Every change applies immediately.
 
 use eframe::egui::{self, Color32, Sense, Stroke, vec2};
-use opencreative_config::{FitConfig, Metric, Rgb, SceneConfig};
+use std::time::{Duration, Instant};
+
+use opencreative_config::{FitConfig, Metric, Rgb, SceneConfig, SkinConfig};
+use opencreative_render::panels::Layout;
 
 use crate::icons::{self, Icon};
 use crate::theme::{self, Palette};
@@ -18,12 +21,6 @@ const MAX_PREVIEW_SCALE: f32 = 1.6;
 enum Mode {
     Digital,
     Multimedia,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-enum Style {
-    Panels,
-    Gauges,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -299,27 +296,8 @@ fn digital(app: &mut App, ui: &mut egui::Ui) {
     let scene = app.applied.scene.clone();
     let secs = interval(&scene).unwrap_or(1.0);
 
-    section(ui, "Style");
-    let mut style = if matches!(scene, SceneConfig::Monitor { .. }) {
-        Style::Gauges
-    } else {
-        Style::Panels
-    };
-    if segmented(
-        ui,
-        &mut style,
-        &[(Style::Panels, "Panels"), (Style::Gauges, "Gauges")],
-    ) {
-        let next = match style {
-            Style::Gauges => SceneConfig::Monitor {
-                interval_secs: secs,
-            },
-            Style::Panels => {
-                let mut panels = SceneConfig::default();
-                set_interval(&mut panels, secs);
-                panels
-            }
-        };
+    section(ui, "Skin");
+    if let Some(next) = skin_gallery(app, ui, &scene, secs) {
         app.set_scene(next);
         return;
     }
@@ -327,6 +305,7 @@ fn digital(app: &mut App, ui: &mut egui::Ui) {
 
     match scene {
         SceneConfig::Panels {
+            skin,
             mut primary,
             mut secondary,
             interval_secs,
@@ -344,7 +323,13 @@ fn digital(app: &mut App, ui: &mut egui::Ui) {
                     changed |= metric_combo(ui, "secondary-1", &mut secondary[0]);
                     ui.end_row();
                     ui.label(egui::RichText::new("Third reading").color(p.muted));
-                    changed |= metric_combo(ui, "secondary-2", &mut secondary[1]);
+                    // The HUD skin charts network traffic in that spot instead.
+                    let shown = skin != SkinConfig::Hud;
+                    ui.add_enabled_ui(shown, |ui| {
+                        changed |= metric_combo(ui, "secondary-2", &mut secondary[1]);
+                    })
+                    .response
+                    .on_disabled_hover_text("The HUD skin shows network speeds here.");
                     ui.end_row();
                 });
             ui.add_space(12.0);
@@ -370,6 +355,7 @@ fn digital(app: &mut App, ui: &mut egui::Ui) {
             }
             if changed {
                 app.set_scene(SceneConfig::Panels {
+                    skin,
                     primary,
                     secondary,
                     interval_secs,
@@ -385,6 +371,162 @@ fn digital(app: &mut App, ui: &mut egui::Ui) {
             );
         }
     }
+}
+
+/// A choice in the skin gallery: a Panels skin, or the gauges screen.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Look {
+    Skin(SkinConfig),
+    Gauges,
+}
+
+impl Look {
+    const ALL: [Look; 3] = [
+        Look::Skin(SkinConfig::Lines),
+        Look::Skin(SkinConfig::Hud),
+        Look::Gauges,
+    ];
+
+    fn name(self) -> &'static str {
+        match self {
+            Look::Skin(skin) => skin.name(),
+            Look::Gauges => "Gauges",
+        }
+    }
+}
+
+/// Live thumbnails for the skin gallery, re-rendered every few seconds.
+#[derive(Default)]
+pub struct SkinThumbs {
+    rendered: Option<Instant>,
+    textures: Vec<egui::TextureHandle>,
+}
+
+const THUMB_REFRESH: Duration = Duration::from_secs(2);
+const THUMB_SIZE: egui::Vec2 = vec2(176.0, 132.0);
+
+/// Shows each look with the user's readings; returns the scene to switch to
+/// when one is clicked.
+fn skin_gallery(
+    app: &mut App,
+    ui: &mut egui::Ui,
+    scene: &SceneConfig,
+    secs: f64,
+) -> Option<SceneConfig> {
+    let p = Palette::of(ui.ctx());
+    let (current, layout) = match scene {
+        SceneConfig::Panels {
+            skin,
+            primary,
+            secondary,
+            ..
+        } => (
+            Look::Skin(*skin),
+            Layout {
+                primary: *primary,
+                secondary: *secondary,
+            },
+        ),
+        _ => (Look::Gauges, default_layout()),
+    };
+    refresh_thumbs(app, ui.ctx(), &layout);
+
+    let mut picked = None;
+    ui.horizontal_wrapped(|ui| {
+        for (look, texture) in Look::ALL.into_iter().zip(&app.skin_thumbs.textures) {
+            let selected = look == current;
+            let stroke = if selected {
+                Stroke::new(2.0, p.accent)
+            } else {
+                Stroke::new(1.0, p.border)
+            };
+            let response = egui::Frame::new()
+                .stroke(stroke)
+                .corner_radius(10)
+                .inner_margin(8)
+                .show(ui, |ui| {
+                    // Keep each card as narrow as its thumbnail.
+                    ui.set_max_width(THUMB_SIZE.x);
+                    ui.vertical_centered(|ui| {
+                        ui.add(egui::Image::new((texture.id(), THUMB_SIZE)).corner_radius(6));
+                        ui.label(egui::RichText::new(look.name()).color(if selected {
+                            p.accent
+                        } else {
+                            p.text
+                        }));
+                    });
+                })
+                .response
+                .interact(Sense::click())
+                .on_hover_cursor(egui::CursorIcon::PointingHand);
+            if response.clicked() && !selected {
+                picked = Some(look);
+            }
+        }
+    });
+    picked.map(|look| match look {
+        Look::Gauges => SceneConfig::Monitor {
+            interval_secs: secs,
+        },
+        Look::Skin(skin) => SceneConfig::Panels {
+            skin,
+            primary: layout.primary,
+            secondary: layout.secondary,
+            interval_secs: secs,
+        },
+    })
+}
+
+fn default_layout() -> Layout {
+    match SceneConfig::default() {
+        SceneConfig::Panels {
+            primary, secondary, ..
+        } => Layout { primary, secondary },
+        _ => unreachable!("the default scene is Panels"),
+    }
+}
+
+fn refresh_thumbs(app: &mut App, ctx: &egui::Context, layout: &Layout) {
+    let thumbs = &mut app.skin_thumbs;
+    let fresh = thumbs
+        .rendered
+        .is_some_and(|at| at.elapsed() < THUMB_REFRESH);
+    if fresh && thumbs.textures.len() == Look::ALL.len() {
+        return;
+    }
+    let snap = app.history.latest().cloned().unwrap_or_default();
+    let history = app.history.samples();
+    let clock = chrono::Local::now().format("%H:%M").to_string();
+    let spec = &opencreative_device::SUPPORTED[0];
+    let (w, h) = (spec.width, spec.height);
+    let images: Vec<_> = Look::ALL
+        .into_iter()
+        .map(|look| {
+            let frame = match look {
+                Look::Skin(skin) => {
+                    opencreative_render::panels::render(&snap, &history, layout, skin.into(), w, h)
+                }
+                Look::Gauges => opencreative_render::monitor::render(&snap, &clock, w, h),
+            };
+            egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], frame.data())
+        })
+        .collect();
+    let thumbs = &mut app.skin_thumbs;
+    if thumbs.textures.len() == images.len() {
+        for (texture, image) in thumbs.textures.iter_mut().zip(images) {
+            texture.set(image, egui::TextureOptions::LINEAR);
+        }
+    } else {
+        thumbs.textures = images
+            .into_iter()
+            .enumerate()
+            .map(|(i, image)| {
+                ctx.load_texture(format!("skin-{i}"), image, egui::TextureOptions::LINEAR)
+            })
+            .collect();
+    }
+    thumbs.rendered = Some(Instant::now());
+    ctx.request_repaint_after(THUMB_REFRESH);
 }
 
 fn metric_combo(ui: &mut egui::Ui, id: &str, metric: &mut Metric) -> bool {

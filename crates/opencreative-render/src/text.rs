@@ -2,7 +2,7 @@
 
 use std::sync::LazyLock;
 
-use ab_glyph::{Font as _, FontRef, PxScale, ScaleFont as _, point};
+use ab_glyph::{Font as _, FontRef, PxScale, ScaleFont as _, VariableFont as _, point};
 use tiny_skia::Pixmap;
 
 // Rajdhani, SIL Open Font License 1.1 (assets/fonts/OFL-Rajdhani.txt).
@@ -10,9 +10,13 @@ static BOLD: LazyLock<FontRef<'static>> = LazyLock::new(|| {
     FontRef::try_from_slice(include_bytes!("../../../assets/fonts/Rajdhani-Bold.ttf"))
         .expect("bundled font is valid")
 });
-static MEDIUM: LazyLock<FontRef<'static>> = LazyLock::new(|| {
-    FontRef::try_from_slice(include_bytes!("../../../assets/fonts/Rajdhani-Medium.ttf"))
-        .expect("bundled font is valid")
+// Orbitron, SIL Open Font License 1.1 (assets/fonts/OFL-Orbitron.txt).
+static DISPLAY: LazyLock<FontRef<'static>> = LazyLock::new(|| {
+    let mut font = FontRef::try_from_slice(include_bytes!("../../../assets/fonts/Orbitron.ttf"))
+        .expect("bundled font is valid");
+    // A variable font: pick a semibold weight for large numerals.
+    font.set_variation(b"wght", 600.0);
+    font
 });
 static SEMIBOLD: LazyLock<FontRef<'static>> = LazyLock::new(|| {
     FontRef::try_from_slice(include_bytes!(
@@ -25,7 +29,8 @@ static SEMIBOLD: LazyLock<FontRef<'static>> = LazyLock::new(|| {
 pub enum Weight {
     Bold,
     SemiBold,
-    Medium,
+    /// Squared geometric numerals for large readings.
+    Display,
 }
 
 #[derive(Clone, Copy)]
@@ -39,7 +44,7 @@ fn face(weight: Weight) -> &'static FontRef<'static> {
     match weight {
         Weight::Bold => &BOLD,
         Weight::SemiBold => &SEMIBOLD,
-        Weight::Medium => &MEDIUM,
+        Weight::Display => &DISPLAY,
     }
 }
 

@@ -29,7 +29,9 @@ a USB capture of DeepCreative (see [docs/protocol](docs/protocol/lm-series.md)).
 ## Features
 
 - Panels screen: one large and two small readings of your choice (CPU/GPU
-  temperature, load, frequency, power, RAM), like the vendor app's digital mode
+  temperature, load, frequency, power, RAM), like the vendor app's digital
+  mode, in a choice of skins: **Lines** (interlocking lines over a tile grid)
+  and **HUD** (neon frames with live network and usage charts)
 - Gauges screen: CPU temperature and load gauges, GPU temperature, RAM, clock
 - Images (PNG, JPEG, WebP, BMP) and animated GIFs, with cover / contain / stretch fit
 - Solid colors, brightness 0-100, screen on/off
@@ -73,6 +75,7 @@ systemctl --user enable --now opencreative
 opencreative list                      # find connected coolers
 opencreative panels                    # live readings in panels (the default screen)
 opencreative panels --primary gpu-temp --secondary gpu-load --secondary ram-usage
+opencreative panels --skin hud          # neon skin with live charts
 opencreative monitor                   # live readings as gauges
 opencreative image wallpaper.gif       # still images or looping GIFs
 opencreative image logo.png --fit contain
@@ -99,8 +102,9 @@ Laid out like DeepCool's app, with a light theme (dark available):
   a two-minute history chart.
 - **Devices**: coolers found on USB, with a live thumbnail of each screen.
 - **Cooler screen**: brightness, Zen mode (screen off), rotation, and a live
-  preview. *Digital* mode picks the Panels or Gauges style and which readings
-  to show (with recommended combinations); *Multimedia* mode shows an image or
+  preview. *Digital* mode picks a skin from a gallery of live thumbnails
+  (Lines, HUD, Gauges) and which readings to show (with recommended
+  combinations); *Multimedia* mode shows an image or
   GIF (Browse… or drop a file on the window) or a color. Changes apply
   immediately.
 - **Settings**: run in the background at login, install the USB rule (asks for
@@ -164,9 +168,9 @@ New devices implement `Display` in `opencreative-device`; frontends don't change
 ## Credits
 
 - Protocol captures: [daedlock/deepcool-lm](https://github.com/daedlock/deepcool-lm) (MIT)
-- Fonts: [Rajdhani](https://fonts.google.com/specimen/Rajdhani) by Indian Type Foundry and [IBM Plex Sans](https://github.com/IBM/plex) by IBM (SIL OFL 1.1)
+- Fonts: [Rajdhani](https://fonts.google.com/specimen/Rajdhani) by Indian Type Foundry, [Orbitron](https://github.com/theleagueof/orbitron) by The League of Moveable Type, and [IBM Plex Sans](https://github.com/IBM/plex) by IBM (SIL OFL 1.1)
 
 ## License
 
 Dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your option.
-Bundled fonts are under the SIL Open Font License: [Rajdhani](assets/fonts/OFL-Rajdhani.txt) (screen) and [IBM Plex Sans](assets/fonts/OFL-IBMPlexSans.txt) (app).
+Bundled fonts are under the SIL Open Font License: [Rajdhani](assets/fonts/OFL-Rajdhani.txt) and [Orbitron](assets/fonts/OFL-Orbitron.txt) (screen), [IBM Plex Sans](assets/fonts/OFL-IBMPlexSans.txt) (app).

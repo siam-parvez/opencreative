@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand, ValueEnum};
-use opencreative_config::{FitConfig, Metric, Rgb, SceneConfig};
+use opencreative_config::{FitConfig, Metric, Rgb, SceneConfig, SkinConfig};
 use opencreative_core::{Player, Scene};
 use opencreative_device as device;
 use opencreative_ipc::{self as ipc, Request, Response};
@@ -65,6 +65,9 @@ enum Command {
     },
     /// Show chosen readings in outlined panels: one large, two small.
     Panels {
+        /// Look of the screen.
+        #[arg(long, value_enum, default_value_t = SkinArg::Lines)]
+        skin: SkinArg,
         /// The large reading.
         #[arg(long, default_value = "cpu-temp")]
         primary: Metric,
@@ -108,6 +111,21 @@ enum PreviewWhat {
         #[arg(long, value_enum, default_value_t = FitArg::Cover)]
         fit: FitArg,
     },
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum SkinArg {
+    Lines,
+    Hud,
+}
+
+impl From<SkinArg> for SkinConfig {
+    fn from(s: SkinArg) -> Self {
+        match s {
+            SkinArg::Lines => SkinConfig::Lines,
+            SkinArg::Hud => SkinConfig::Hud,
+        }
+    }
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -196,6 +214,7 @@ fn run_direct(command: Command, serial: Option<&str>, rotation: Rotation) -> Res
             play(Scene::Monitor { interval }, serial, rotation)
         }
         Command::Panels {
+            skin,
             primary,
             secondary,
             interval,
@@ -205,7 +224,13 @@ fn run_direct(command: Command, serial: Option<&str>, rotation: Rotation) -> Res
                 secondary: two_secondaries(&secondary)?,
             };
             let interval = interval_from_secs(interval)?;
-            play(Scene::Panels { layout, interval }, serial, rotation)
+            let skin = SkinConfig::from(skin).into();
+            let scene = Scene::Panels {
+                layout,
+                skin,
+                interval,
+            };
+            play(scene, serial, rotation)
         }
         _ => unreachable!("not a screen command"),
     }
@@ -247,11 +272,13 @@ fn send_to_daemon(
             }
         }
         Command::Panels {
+            skin,
             primary,
             secondary,
             interval,
         } => Request::SetScene {
             scene: SceneConfig::Panels {
+                skin: skin.into(),
                 primary,
                 secondary: two_secondaries(&secondary)?,
                 interval_secs: interval,

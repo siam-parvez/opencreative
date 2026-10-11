@@ -19,7 +19,7 @@ use std::time::Duration;
 use opencreative_core::Scene;
 use opencreative_render::Rotation;
 use opencreative_render::media::Fit;
-use opencreative_render::panels::Layout;
+use opencreative_render::panels::{Layout, Skin};
 pub use opencreative_sensors::Metric;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -89,6 +89,8 @@ pub enum SceneConfig {
         interval_secs: f64,
     },
     Panels {
+        #[serde(default)]
+        skin: SkinConfig,
         primary: Metric,
         secondary: [Metric; 2],
         #[serde(default = "default_interval")]
@@ -111,6 +113,7 @@ fn default_interval() -> f64 {
 impl Default for SceneConfig {
     fn default() -> Self {
         Self::Panels {
+            skin: SkinConfig::Lines,
             primary: Metric::CpuTemp,
             secondary: [Metric::CpuFreq, Metric::CpuLoad],
             interval_secs: default_interval(),
@@ -132,10 +135,12 @@ impl SceneConfig {
                 interval: interval(*interval_secs)?,
             },
             Self::Panels {
+                skin,
                 primary,
                 secondary,
                 interval_secs,
             } => Scene::Panels {
+                skin: (*skin).into(),
                 layout: Layout {
                     primary: *primary,
                     secondary: *secondary,
@@ -148,6 +153,37 @@ impl SceneConfig {
             },
             Self::Solid { color } => Scene::Solid(color.0),
         })
+    }
+}
+
+/// Look of the Panels screen.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SkinConfig {
+    /// Thin interlocking lines over a tile grid.
+    #[default]
+    Lines,
+    /// Neon frames with live charts.
+    Hud,
+}
+
+impl SkinConfig {
+    pub const ALL: [SkinConfig; 2] = [SkinConfig::Lines, SkinConfig::Hud];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            SkinConfig::Lines => "Lines",
+            SkinConfig::Hud => "HUD",
+        }
+    }
+}
+
+impl From<SkinConfig> for Skin {
+    fn from(s: SkinConfig) -> Self {
+        match s {
+            SkinConfig::Lines => Skin::Lines,
+            SkinConfig::Hud => Skin::Hud,
+        }
     }
 }
 

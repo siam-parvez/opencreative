@@ -83,6 +83,11 @@ impl SensorHistory {
         self.samples.back()
     }
 
+    /// Recent readings, oldest first.
+    pub fn samples(&self) -> Vec<Snapshot> {
+        self.samples.iter().cloned().collect()
+    }
+
     pub fn temperatures(&self) -> &[(String, Option<f32>)] {
         &self.temperatures
     }
