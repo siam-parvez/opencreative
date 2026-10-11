@@ -14,6 +14,19 @@ An alternative to DeepCool's Windows-only DeepCreative app.
   <img src="docs/screenshots/device.png" alt="OpenCreative cooler screen settings" width="49%">
 </p>
 
+### Screen skins
+
+What the cooler shows, rendered at the panel's 320x240 (shown at 2x):
+
+<p>
+  <img src="docs/screenshots/skin-lines.png" alt="Lines skin: three readings framed by thin lines over a tile grid" width="32%">
+  <img src="docs/screenshots/skin-hud.png" alt="HUD skin: neon frames with network and usage charts" width="32%">
+  <img src="docs/screenshots/skin-gauges.png" alt="Gauges skin: CPU temperature and load gauges" width="32%">
+</p>
+
+**Lines** · **HUD** · **Gauges**. Regenerate with
+`cargo run -p opencreative-render --example panels -- out.png [lines|hud|gauges] [landscape|portrait] [claude]`.
+
 ## Status
 
 Early. Linux first; Windows and macOS are planned (the USB layer, `nusb`, already

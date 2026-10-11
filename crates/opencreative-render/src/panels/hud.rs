@@ -14,11 +14,13 @@ use crate::monitor::rgb;
 use crate::text::{self, Align, Weight};
 
 /// Exact in RGB565, so the flat background never dithers.
-const BG: [u8; 3] = [24, 28, 32];
+const BG: [u8; 3] = [16, 16, 16];
 const CYAN: [u8; 3] = [0x30, 0xe8, 0xf0];
 const YELLOW: [u8; 3] = [0xe8, 0xf0, 0x30];
 const GLOW: [u8; 3] = [0xa0, 0xd8, 0x40];
-const GRID: [u8; 3] = [0x20, 0x40, 0x44];
+const GRID: [u8; 3] = [32, 60, 60];
+/// The area under a chart line.
+const CHART_FILL: [u8; 3] = [16, 48, 48];
 const TEXT: [u8; 3] = [0xf8, 0xfc, 0xf8];
 const MUTED: [u8; 3] = [0x90, 0x98, 0xa0];
 const MARGIN: f32 = 8.0;
@@ -179,6 +181,33 @@ fn main_block(pm: &mut Pixmap, snap: &Snapshot, metric: Metric, r: Area) {
         &paint,
     );
 
+    // Two small bars outside the frame: top left and along the bottom.
+    let thin = solid(CYAN);
+    stroke(
+        pm,
+        &[
+            p(-0.01, 0.075),
+            p(0.12, 0.075),
+            p(0.12, 0.09),
+            p(-0.01, 0.09),
+        ],
+        true,
+        line,
+        &thin,
+    );
+    stroke(
+        pm,
+        &[
+            p(0.03, 0.955),
+            p(0.58, 0.955),
+            p(0.58, 0.975),
+            p(0.03, 0.975),
+        ],
+        true,
+        line,
+        &solid(YELLOW),
+    );
+
     // Inner panel with chamfered top corners.
     let (ix0, iy0) = p(0.07, 0.14);
     let (ix1, iy1) = p(0.97, 0.99);
@@ -231,7 +260,7 @@ fn main_block(pm: &mut Pixmap, snap: &Snapshot, metric: Metric, r: Area) {
             icon_x - size * 0.35,
             icon_y,
             r.h() * 0.06,
-            Weight::SemiBold,
+            Weight::Label,
             Align::Left,
             CLAUDE,
         );
@@ -274,7 +303,7 @@ fn main_block(pm: &mut Pixmap, snap: &Snapshot, metric: Metric, r: Area) {
         cx,
         p(0.0, 0.27).1,
         r.h() * 0.075,
-        Weight::Display,
+        Weight::Label,
         Align::Center,
         TEXT,
     );
@@ -284,7 +313,7 @@ fn main_block(pm: &mut Pixmap, snap: &Snapshot, metric: Metric, r: Area) {
     };
     let max_w = (ix1 - ix0) * 0.85;
     let mut size = r.h() * 0.34;
-    let width = text::measure(value, size, Weight::Display);
+    let width = text::measure(value, size, Weight::Medium);
     if width > max_w {
         size *= max_w / width;
     }
@@ -294,7 +323,7 @@ fn main_block(pm: &mut Pixmap, snap: &Snapshot, metric: Metric, r: Area) {
         cx,
         p(0.0, 0.55).1,
         size,
-        Weight::Display,
+        Weight::Medium,
         Align::Center,
         color,
     );
@@ -304,7 +333,7 @@ fn main_block(pm: &mut Pixmap, snap: &Snapshot, metric: Metric, r: Area) {
         cx,
         p(0.0, 0.79).1,
         r.h() * 0.09,
-        Weight::Display,
+        Weight::Label,
         Align::Center,
         TEXT,
     );
@@ -315,7 +344,7 @@ fn main_block(pm: &mut Pixmap, snap: &Snapshot, metric: Metric, r: Area) {
             cx,
             p(0.0, 0.88).1,
             r.h() * 0.05,
-            Weight::SemiBold,
+            Weight::Label,
             Align::Center,
             MUTED,
         );
@@ -334,15 +363,15 @@ fn network(pm: &mut Pixmap, snap: &Snapshot, history: &[Snapshot], r: Area) {
         let (value, unit) = rate_parts(bps);
         let x = r.x0 + r.w() * 0.2;
         let size = r.h() * 0.19;
-        text::draw(pm, &value, x, y, size, Weight::Display, Align::Left, TEXT);
-        let value_w = text::measure(&value, size, Weight::Display);
+        text::draw(pm, &value, x, y, size, Weight::Label, Align::Left, TEXT);
+        let value_w = text::measure(&value, size, Weight::Label);
         text::draw(
             pm,
             unit,
             x + value_w + size * 0.2,
             y + size * 0.15,
             size * 0.5,
-            Weight::Display,
+            Weight::Label,
             Align::Left,
             TEXT,
         );
@@ -370,7 +399,7 @@ fn network(pm: &mut Pixmap, snap: &Snapshot, history: &[Snapshot], r: Area) {
 fn secondary(pm: &mut Pixmap, snap: &Snapshot, history: &[Snapshot], metric: Metric, r: Area) {
     let cx = (r.x0 + r.x1) / 2.0;
     let label_size = r.h() * 0.085;
-    let label_w = text::measure(metric.label(), label_size, Weight::SemiBold);
+    let label_w = text::measure(metric.label(), label_size, Weight::Label);
     let icon = label_size * 1.1;
     let start = cx - (icon + 5.0 + label_w) / 2.0;
     let ly = r.y0 + r.h() * 0.08;
@@ -381,7 +410,7 @@ fn secondary(pm: &mut Pixmap, snap: &Snapshot, history: &[Snapshot], metric: Met
         start + icon + 5.0,
         ly,
         label_size,
-        Weight::SemiBold,
+        Weight::Label,
         Align::Left,
         TEXT,
     );
@@ -397,7 +426,7 @@ fn secondary(pm: &mut Pixmap, snap: &Snapshot, history: &[Snapshot], metric: Met
         cx,
         r.y0 + r.h() * 0.3,
         r.h() * 0.22,
-        Weight::Display,
+        Weight::Medium,
         Align::Center,
         color,
     );
@@ -412,7 +441,7 @@ fn secondary(pm: &mut Pixmap, snap: &Snapshot, history: &[Snapshot], metric: Met
         cx,
         r.y0 + r.h() * 0.49,
         r.h() * 0.075,
-        Weight::Display,
+        Weight::Label,
         Align::Center,
         TEXT,
     );
@@ -433,7 +462,7 @@ fn secondary(pm: &mut Pixmap, snap: &Snapshot, history: &[Snapshot], metric: Met
         area.x0,
         ty,
         size,
-        Weight::SemiBold,
+        Weight::Label,
         Align::Left,
         TEXT,
     );
@@ -443,7 +472,7 @@ fn secondary(pm: &mut Pixmap, snap: &Snapshot, history: &[Snapshot], metric: Met
         area.x1,
         ty,
         size,
-        Weight::SemiBold,
+        Weight::Label,
         Align::Right,
         TEXT,
     );
@@ -512,28 +541,36 @@ fn chart(pm: &mut Pixmap, r: Area, series: &[(Vec<Option<f32>>, [u8; 3])]) {
         let y = r.y0 + r.h() * i as f32 / 4.0;
         stroke(pm, &[(r.x0, y), (r.x1, y)], false, 1.0, &grid);
     }
-    for (values, color) in series {
+    for (n, (values, color)) in series.iter().enumerate() {
         let recent = &values[values.len().saturating_sub(SLOTS)..];
         let offset = SLOTS - recent.len();
         let dx = r.w() / (SLOTS - 1) as f32;
-        let mut run: Vec<(f32, f32)> = Vec::new();
         let paint = solid(*color);
-        for (i, v) in recent.iter().enumerate() {
-            match v {
-                Some(v) => run.push((
-                    r.x0 + (offset + i) as f32 * dx,
-                    r.y1 - v.clamp(0.0, 1.0) * r.h(),
-                )),
-                None => {
-                    if run.len() > 1 {
-                        stroke(pm, &run, false, 1.3, &paint);
-                    }
-                    run.clear();
-                }
+        let runs = recent
+            .iter()
+            .enumerate()
+            .map(|(i, v)| {
+                v.map(|v| {
+                    (
+                        r.x0 + (offset + i) as f32 * dx,
+                        r.y1 - v.clamp(0.0, 1.0) * r.h(),
+                    )
+                })
+            })
+            .collect::<Vec<_>>();
+        for run in runs.split(Option::is_none) {
+            let run: Vec<(f32, f32)> = run.iter().flatten().copied().collect();
+            if run.len() < 2 {
+                continue;
             }
-        }
-        if run.len() > 1 {
-            stroke(pm, &run, false, 1.3, &paint);
+            // The first series gets a filled area under its line.
+            if n == 0 {
+                let mut area = run.clone();
+                area.push((run[run.len() - 1].0, r.y1));
+                area.push((run[0].0, r.y1));
+                fill(pm, &area, &solid(CHART_FILL));
+            }
+            stroke(pm, &run, false, 1.0, &paint);
         }
     }
 }

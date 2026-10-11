@@ -11,10 +11,11 @@ use crate::text::{self, Align, Weight};
 /// Flat on purpose: a subtle gradient spans only a few RGB565 levels and shows
 /// as horizontal bands on the panel. This value is exact in RGB565 (red/blue
 /// multiples of 8, green of 4), so dithering leaves it untouched.
-const BG: [u8; 3] = [0x10, 0x14, 0x20];
-const TRACK: [u8; 3] = [0x24, 0x2c, 0x3d];
-const TEXT: [u8; 3] = [0xf1, 0xf5, 0xf9];
-const MUTED: [u8; 3] = [0x8b, 0x95, 0xa7];
+// The same neutral black, type and accents as the Panels skins.
+const BG: [u8; 3] = [16, 16, 16];
+const TRACK: [u8; 3] = [40, 40, 40];
+const TEXT: [u8; 3] = [0xf8, 0xfc, 0xf8];
+const MUTED: [u8; 3] = [0x98, 0x9c, 0xa0];
 
 /// Gauge arc: 270 degrees, open at the bottom.
 const ARC_START: f32 = 0.75 * PI;
@@ -95,15 +96,20 @@ impl Gauge {
             self.color,
         );
 
-        let value_size = radius * 0.75;
-        let label_size = radius * 0.28;
+        let mut value_size = radius * 0.62;
+        let fits = radius * 1.35;
+        let width = text::measure(&self.value, value_size, Weight::Medium);
+        if width > fits {
+            value_size *= fits / width;
+        }
+        let label_size = radius * 0.2;
         text::draw(
             pm,
             &self.value,
             cx,
             cy - radius * 0.05,
             value_size,
-            Weight::Bold,
+            Weight::Medium,
             Align::Center,
             TEXT,
         );
@@ -113,7 +119,7 @@ impl Gauge {
             cx,
             cy + radius * 0.82,
             label_size,
-            Weight::SemiBold,
+            Weight::Label,
             Align::Center,
             MUTED,
         );
@@ -170,7 +176,7 @@ fn status_strip(pm: &mut Pixmap, snap: &Snapshot, clock: &str, w: f32, h: f32) {
     }
 
     let cy = top + strip / 2.0;
-    let size = 22.0 * s;
+    let size = 17.0 * s;
     let edge = 16.0 * s;
     let (gpu, gpu_color) = match snap.gpu.temp_c {
         Some(t) => (format!("GPU {t:.0}°"), temp_color(t)),
@@ -183,7 +189,7 @@ fn status_strip(pm: &mut Pixmap, snap: &Snapshot, clock: &str, w: f32, h: f32) {
         edge,
         cy,
         size,
-        Weight::SemiBold,
+        Weight::Label,
         Align::Left,
         gpu_color,
     );
@@ -193,7 +199,7 @@ fn status_strip(pm: &mut Pixmap, snap: &Snapshot, clock: &str, w: f32, h: f32) {
         w / 2.0,
         cy,
         size,
-        Weight::SemiBold,
+        Weight::Label,
         Align::Center,
         TEXT,
     );
@@ -203,7 +209,7 @@ fn status_strip(pm: &mut Pixmap, snap: &Snapshot, clock: &str, w: f32, h: f32) {
         w - edge,
         cy,
         size,
-        Weight::SemiBold,
+        Weight::Label,
         Align::Right,
         TEXT,
     );
@@ -234,10 +240,10 @@ fn ramp(stops: &[(f32, [u8; 3])], v: f32) -> [u8; 3] {
 pub(crate) fn temp_color(celsius: f32) -> [u8; 3] {
     ramp(
         &[
-            (35.0, [0x22, 0xd3, 0xee]),
-            (55.0, [0x4a, 0xde, 0x80]),
-            (72.0, [0xfb, 0xbf, 0x24]),
-            (88.0, [0xef, 0x44, 0x44]),
+            (40.0, [0x30, 0xe8, 0xf0]),
+            (60.0, [0x70, 0xd8, 0x90]),
+            (75.0, [0xe8, 0xf0, 0x30]),
+            (90.0, [0xf0, 0x50, 0x40]),
         ],
         celsius,
     )
@@ -245,7 +251,7 @@ pub(crate) fn temp_color(celsius: f32) -> [u8; 3] {
 
 fn load_color(pct: f32) -> [u8; 3] {
     ramp(
-        &[(0.0, [0xa7, 0x8b, 0xfa]), (100.0, [0xf4, 0x72, 0xb6])],
+        &[(0.0, [0x58, 0xd0, 0xe8]), (100.0, [0xe8, 0xc0, 0x60])],
         pct,
     )
 }

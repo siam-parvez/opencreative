@@ -1,12 +1,13 @@
 //! Renders the Panels screen with sample values:
-//! `cargo run --example panels -- out.png [lines|hud] [landscape|portrait] [claude]`.
+//! `cargo run --example panels -- out.png [lines|hud|gauges] [landscape|portrait] [claude]`.
 use opencreative_render::panels::{Layout, Skin, render};
 use opencreative_sensors::{ClaudeUsage, ClaudeWindow, Gpu, Metric, Snapshot};
 
 fn main() {
     let mut args = std::env::args().skip(1);
     let path = args.next().expect("output path");
-    let skin = match args.next().as_deref() {
+    let which = args.next();
+    let skin = match which.as_deref() {
         Some("hud") => Skin::Hud,
         _ => Skin::Lines,
     };
@@ -60,7 +61,12 @@ fn main() {
             secondary: [Metric::GpuLoad, Metric::GpuTemp],
         },
     };
-    render(&snap, &history, &layout, skin, w, h)
-        .save_png(path)
-        .unwrap();
+    snap.cpu_load_pct = 34.0;
+    snap.mem_used_pct = 41.0;
+    let frame = if which.as_deref() == Some("gauges") {
+        opencreative_render::monitor::render(&snap, "18:28", w, h)
+    } else {
+        render(&snap, &history, &layout, skin, w, h)
+    };
+    frame.save_png(path).unwrap();
 }
