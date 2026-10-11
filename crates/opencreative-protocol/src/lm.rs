@@ -48,7 +48,10 @@ pub fn set_brightness(percent: u8) -> Vec<u8> {
     ])
 }
 
-/// Toggles the screen on/off ("Zen mode" in the vendor app).
+/// Captured from the vendor app and labelled "Zen mode" (screen on/off) by
+/// `daedlock/deepcool-lm`. On an LM360 it had no visible effect while frames
+/// were streaming, so its meaning is unconfirmed and nothing uses it; screen
+/// off is implemented as brightness 0 instead.
 pub fn screen_toggle() -> Vec<u8> {
     encode(&[op::SCREEN_TOGGLE, 0x00, 0x00, 0x00])
 }

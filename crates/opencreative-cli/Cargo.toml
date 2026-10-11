@@ -15,6 +15,7 @@ path = "src/main.rs"
 [dependencies]
 opencreative-config.workspace = true
 opencreative-core.workspace = true
+opencreative-daemon.workspace = true
 opencreative-ipc.workspace = true
 opencreative-device.workspace = true
 opencreative-render.workspace = true

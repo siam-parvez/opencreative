@@ -47,16 +47,19 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.target }}
-      - run: cargo build --release --locked --target ${{ matrix.target }} -p opencreative-cli
+      - run: cargo build --release --locked --target ${{ matrix.target }} -p opencreative-cli -p opencreative-gui
 
       - name: Package
         shell: bash
         run: |
           name="opencreative-${GITHUB_REF_NAME}-${{ matrix.target }}"
           mkdir -p "dist/$name"
-          bin="target/${{ matrix.target }}/release/opencreative"
-          [ -f "$bin.exe" ] && bin="$bin.exe"
-          cp "$bin" README.md LICENSE-MIT LICENSE-APACHE "dist/$name/"
+          for bin in opencreative opencreative-gui; do
+            path="target/${{ matrix.target }}/release/$bin"
+            [ -f "$path.exe" ] && path="$path.exe"
+            cp "$path" "dist/$name/"
+          done
+          cp README.md LICENSE-MIT LICENSE-APACHE "dist/$name/"
           case "${{ matrix.target }}" in
             *linux*) cp -r packaging/linux "dist/$name/packaging" ;;
           esac

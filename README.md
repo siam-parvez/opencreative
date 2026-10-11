@@ -69,12 +69,26 @@ opencreative image wallpaper.gif       # still images or looping GIFs
 opencreative image logo.png --fit contain
 opencreative solid '#ff8800'
 opencreative brightness 60
-opencreative screen-toggle
+opencreative screen off                # backlight off; `screen on` restores it
 opencreative --rotate 180 monitor      # upside-down pump
 opencreative sensors                   # check which temperature sensors were found
 opencreative preview monitor -o out.png
 opencreative status                    # what the daemon is showing
 ```
+
+### Desktop app
+
+```sh
+cargo install --path crates/opencreative-gui
+opencreative-gui
+```
+
+Pick the screen (system monitor, image/GIF — drop a file on the window — or a
+color), brightness, rotation and screen on/off, with a live preview of your
+changes before you apply them. "Device-accurate colors" shows the panel's
+16-bit color exactly. The app talks to the daemon; if none is running it
+starts one inside the window, so the screen only keeps updating while the
+window is open — enable the systemd service to avoid that.
 
 ### Daemon
 
@@ -108,14 +122,17 @@ crates/
   opencreative-core       scene playback, reconnect loop, daemon engine
   opencreative-config     TOML settings
   opencreative-ipc        JSON-lines protocol between the daemon and its clients
+  opencreative-daemon     the daemon (used by `opencreative daemon` and the GUI)
   opencreative-cli        the `opencreative` binary (CLI + `daemon`)
+  opencreative-gui        the `opencreative-gui` desktop app (egui)
 ```
 
 New devices implement `Display` in `opencreative-device`; frontends don't change.
 
 ## Roadmap
 
-- [ ] Desktop GUI (theme picker, live preview, device settings) — see [plan](docs/design/gui.md)
+- [x] Desktop GUI MVP (screen picker, live preview, device settings) — see [plan](docs/design/gui.md)
+- [ ] GUI polish: file picker, sensor history, service page, tray, `.desktop` entry
 - [x] Config file + background daemon with IPC so the GUI and CLI share one device
 - [ ] Daemon on Windows (named pipe)
 - [ ] Theme engine: user-defined layouts (TOML), custom fonts and backgrounds

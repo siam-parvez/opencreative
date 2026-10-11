@@ -1,5 +1,8 @@
-//! `opencreative daemon`: owns the device, serves IPC requests, and persists
-//! every change to the config file so it survives restarts.
+//! The OpenCreative daemon: owns the device, serves IPC requests, and
+//! persists every change to the config file so it survives restarts.
+//!
+//! Run by `opencreative daemon`, and in-process by the GUI when no daemon is
+//! running.
 
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Sender};
@@ -12,6 +15,8 @@ use opencreative_core::{Command, DaemonState, Player, run_daemon};
 use opencreative_ipc::{self as ipc, Request, Response, Status};
 use opencreative_render::Rotation;
 
+/// Runs until the IPC listener fails. Errors early if another daemon is
+/// already running.
 pub fn run(config_path: Option<PathBuf>) -> Result<()> {
     let config_path = match config_path {
         Some(path) => path,
@@ -60,8 +65,10 @@ impl Shared {
         let mut config = self.config.lock().expect("config lock");
         let command = match request {
             Request::Status => {
+                let state = self.state.lock().expect("state lock");
                 return Response::Status(Status {
-                    device: self.state.lock().expect("state lock").device.clone(),
+                    device: state.device.clone(),
+                    screen_on: state.screen_on,
                     config: config.clone(),
                 });
             }
@@ -86,8 +93,8 @@ impl Shared {
                 }
                 None => return error(format!("rotation must be 0, 90, 180 or 270, not {degrees}")),
             },
-            // A momentary action, not a setting: nothing to persist.
-            Request::ScreenToggle => Command::ScreenToggle,
+            // Session state, not a setting: the screen is on after a restart.
+            Request::SetScreen { on } => Command::SetScreen(on),
             Request::Hello { .. } => return error("hello is handled by the server"),
         };
         save(&self.config_path, &config);

@@ -53,4 +53,7 @@ jobs:
         with:
           toolchain: "1.88"
       - uses: Swatinem/rust-cache@v2
-      - run: cargo check --workspace --all-targets --locked
+      - run: cargo check --workspace --all-targets --locked --exclude opencreative-gui
+      # The GUI has its own rust-version (eframe needs a newer compiler).
+      - run: rustup toolchain install 1.95 --profile minimal
+      - run: cargo +1.95 check -p opencreative-gui --all-targets --locked

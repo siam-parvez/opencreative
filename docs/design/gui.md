@@ -37,7 +37,7 @@ opencreative CLI ─┼─ IPC (local socket, JSON lines) ─▶ opencreative da
 |---|---|
 | `opencreative-core` (done, #9) | `Scene`, `Player`, reconnect loop |
 | `opencreative-config` | TOML settings: scene, brightness, rotation, serial, interval; `config_dir()/opencreative/config.toml` |
-| `opencreative-ipc` | Versioned JSON-lines protocol over `interprocess` (Unix socket in `$XDG_RUNTIME_DIR`, named pipe on Windows). Requests: `Hello{proto}`, `GetStatus`, `SetScene`, `SetBrightness`, `ScreenToggle`, `SetRotation`, `Subscribe` (status + sensor snapshot + optional preview frame at low rate) |
+| `opencreative-ipc` | Versioned JSON-lines protocol over `interprocess` (Unix socket in `$XDG_RUNTIME_DIR`, named pipe on Windows). Requests: `Hello{proto}`, `GetStatus`, `SetScene`, `SetBrightness`, `SetScreen`, `SetRotation`, `Subscribe` (status + sensor snapshot + optional preview frame at low rate) |
 | `opencreative daemon` | New CLI subcommand; the systemd unit runs it. Owns the device, persists GUI/CLI changes to config, single-instance lock |
 | `opencreative-gui` | eframe app; UI thread + one backend worker over channels |
 
@@ -60,11 +60,14 @@ opencreative CLI ─┼─ IPC (local socket, JSON lines) ─▶ opencreative da
 ## Milestones (one PR each)
 
 1. ~~Core extraction~~ — done (#9).
-2. **Config + IPC + daemon** — `opencreative daemon`; CLI routes over IPC when a
+2. ~~Config + IPC + daemon~~ — done (#11).
+   **Config + IPC + daemon** — `opencreative daemon`; CLI routes over IPC when a
    daemon answers, else direct USB; systemd unit switches to `daemon`; command
    changes apply immediately (wait on the command channel instead of sleeping).
    Add `pixel::rgb565_le_to_rgba` + round-trip test for the accurate preview.
-3. **GUI MVP (Linux)** — Device + Screens + live preview, client of the daemon,
+3. ~~GUI MVP (Linux)~~ — done. Screen off is backlight 0 + paused frames;
+   the captured "Zen mode" packet had no visible effect.
+   **GUI MVP (Linux)** — Device + Screens + live preview, client of the daemon,
    standalone fallback.
 4. **Polish** — media library, sensors history, service page, tray, `.desktop`
    file + icon, release artifact.
