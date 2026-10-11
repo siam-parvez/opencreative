@@ -7,11 +7,12 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand, ValueEnum};
-use opencreative_config::{FitConfig, Rgb, SceneConfig};
+use opencreative_config::{FitConfig, Metric, Rgb, SceneConfig, SkinConfig};
 use opencreative_core::{Player, Scene};
 use opencreative_device as device;
 use opencreative_ipc::{self as ipc, Request, Response};
 use opencreative_render::media::{self, Fit};
+use opencreative_render::panels::Layout;
 use opencreative_render::{Rotation, monitor, rotate};
 use opencreative_sensors::Sensors;
 
@@ -49,6 +50,11 @@ enum Command {
         #[arg(value_parser = clap::value_parser!(u8).range(0..=100))]
         percent: u8,
     },
+    /// Show a calm screen with a dim clock (Zen mode), or go back.
+    Zen {
+        #[arg(value_enum)]
+        state: OnOff,
+    },
     /// Turn the screen off (backlight off) or back on.
     Screen {
         #[arg(value_enum)]
@@ -62,7 +68,22 @@ enum Command {
         #[arg(long, value_enum, default_value_t = FitArg::Cover)]
         fit: FitArg,
     },
-    /// Show live CPU/GPU temperatures, load, RAM and the clock.
+    /// Show chosen readings in outlined panels: one large, two small.
+    Panels {
+        /// Look of the screen.
+        #[arg(long, value_enum, default_value_t = SkinArg::Lines)]
+        skin: SkinArg,
+        /// The large reading.
+        #[arg(long, default_value = "cpu-temp")]
+        primary: Metric,
+        /// The two small readings (give the flag twice).
+        #[arg(long, num_args = 1, default_values = ["cpu-freq", "cpu-load"])]
+        secondary: Vec<Metric>,
+        /// Seconds between updates.
+        #[arg(long, default_value_t = 1.0)]
+        interval: f64,
+    },
+    /// Show live CPU/GPU temperatures, load, RAM and the clock as gauges.
     Monitor {
         /// Seconds between updates.
         #[arg(long, default_value_t = 1.0)]
@@ -95,6 +116,21 @@ enum PreviewWhat {
         #[arg(long, value_enum, default_value_t = FitArg::Cover)]
         fit: FitArg,
     },
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum SkinArg {
+    Lines,
+    Hud,
+}
+
+impl From<SkinArg> for SkinConfig {
+    fn from(s: SkinArg) -> Self {
+        match s {
+            SkinArg::Lines => SkinConfig::Lines,
+            SkinArg::Hud => SkinConfig::Hud,
+        }
+    }
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -165,6 +201,10 @@ fn connect_daemon(disabled: bool) -> Result<Option<ipc::Client>> {
 fn run_direct(command: Command, serial: Option<&str>, rotation: Rotation) -> Result<()> {
     match command {
         Command::Brightness { percent } => Ok(device::open(serial)?.set_brightness(percent)?),
+        Command::Zen { state } => match state {
+            OnOff::On => play(Scene::Zen, serial, rotation),
+            OnOff::Off => bail!("Zen mode runs until interrupted when there is no daemon"),
+        },
         Command::Screen { state } => {
             // Without a daemon there is no remembered level; use the saved one.
             let level = match state {
@@ -179,11 +219,27 @@ fn run_direct(command: Command, serial: Option<&str>, rotation: Rotation) -> Res
             play(Scene::Media { path, fit }, serial, rotation)
         }
         Command::Monitor { interval } => {
-            if !(interval.is_finite() && interval > 0.0) {
-                bail!("interval must be a positive number of seconds");
-            }
-            let interval = Duration::from_secs_f64(interval);
+            let interval = interval_from_secs(interval)?;
             play(Scene::Monitor { interval }, serial, rotation)
+        }
+        Command::Panels {
+            skin,
+            primary,
+            secondary,
+            interval,
+        } => {
+            let layout = Layout {
+                primary,
+                secondary: two_secondaries(&secondary)?,
+            };
+            let interval = interval_from_secs(interval)?;
+            let skin = SkinConfig::from(skin).into();
+            let scene = Scene::Panels {
+                layout,
+                skin,
+                interval,
+            };
+            play(scene, serial, rotation)
         }
         _ => unreachable!("not a screen command"),
     }
@@ -205,6 +261,9 @@ fn send_to_daemon(
     }
     requests.push(match command {
         Command::Brightness { percent } => Request::SetBrightness { percent },
+        Command::Zen { state } => Request::SetZen {
+            on: matches!(state, OnOff::On),
+        },
         Command::Screen { state } => Request::SetScreen {
             on: matches!(state, OnOff::On),
         },
@@ -224,6 +283,19 @@ fn send_to_daemon(
                 scene: SceneConfig::Image { path, fit },
             }
         }
+        Command::Panels {
+            skin,
+            primary,
+            secondary,
+            interval,
+        } => Request::SetScene {
+            scene: SceneConfig::Panels {
+                skin: skin.into(),
+                primary,
+                secondary: two_secondaries(&secondary)?,
+                interval_secs: interval,
+            },
+        },
         Command::Monitor { interval } => Request::SetScene {
             scene: SceneConfig::Monitor {
                 interval_secs: interval,
@@ -240,6 +312,19 @@ fn send_to_daemon(
     }
     println!("Sent to the OpenCreative daemon.");
     Ok(())
+}
+
+fn interval_from_secs(secs: f64) -> Result<Duration> {
+    if !(secs.is_finite() && secs > 0.0) {
+        bail!("interval must be a positive number of seconds");
+    }
+    Ok(Duration::from_secs_f64(secs))
+}
+
+fn two_secondaries(given: &[Metric]) -> Result<[Metric; 2]> {
+    given
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("give exactly two --secondary readings"))
 }
 
 /// Brightness from the config file, if one sets it.
@@ -263,6 +348,7 @@ fn status(client: Option<ipc::Client>) -> Result<()> {
                 status.device.as_deref().unwrap_or("not connected")
             );
             println!("Screen: {}", if status.screen_on { "on" } else { "off" });
+            println!("Zen mode: {}", if status.zen { "on" } else { "off" });
             print!("{}", toml::to_string_pretty(&status.config)?);
             Ok(())
         }

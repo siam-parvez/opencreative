@@ -1,9 +1,10 @@
 //! The OpenCreative app icon, drawn in code so every size comes from one
 //! source: a dark rounded tile with a gauge ring, like the monitor screen.
 
-use tiny_skia::{Paint, PathBuilder, Pixmap, Transform};
+use tiny_skia::{Paint, Pixmap, Transform};
 
 use crate::monitor::{arc, rgb};
+use crate::shapes::rounded_rect;
 use crate::text::{self, Align, Weight};
 
 const TILE: [u8; 3] = [0x10, 0x14, 0x20];
@@ -17,7 +18,8 @@ pub fn icon(size: u32) -> Pixmap {
     let s = size as f32;
 
     let inset = s * 0.04;
-    if let Some(tile) = rounded_square(inset, s - 2.0 * inset, s * 0.2) {
+    let side = s - 2.0 * inset;
+    if let Some(tile) = rounded_rect(inset, inset, side, side, s * 0.2) {
         let mut paint = Paint::default();
         paint.set_color(rgb(TILE));
         paint.anti_alias = true;
@@ -44,23 +46,6 @@ pub fn icon(size: u32) -> Pixmap {
         TEXT,
     );
     pm
-}
-
-/// A square at (`origin`, `origin`) with side `side` and corner radius `r`.
-fn rounded_square(origin: f32, side: f32, r: f32) -> Option<tiny_skia::Path> {
-    let (x0, y0, x1, y1) = (origin, origin, origin + side, origin + side);
-    let mut pb = PathBuilder::new();
-    pb.move_to(x0 + r, y0);
-    pb.line_to(x1 - r, y0);
-    pb.quad_to(x1, y0, x1, y0 + r);
-    pb.line_to(x1, y1 - r);
-    pb.quad_to(x1, y1, x1 - r, y1);
-    pb.line_to(x0 + r, y1);
-    pb.quad_to(x0, y1, x0, y1 - r);
-    pb.line_to(x0, y0 + r);
-    pb.quad_to(x0, y0, x0 + r, y0);
-    pb.close();
-    pb.finish()
 }
 
 #[cfg(test)]

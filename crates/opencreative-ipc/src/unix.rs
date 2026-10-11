@@ -185,6 +185,7 @@ mod tests {
                     Request::Status => Response::Status(Status {
                         device: None,
                         screen_on: true,
+                        zen: false,
                         config: Config::default(),
                     }),
                     _ => Response::Ok,

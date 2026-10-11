@@ -18,6 +18,8 @@ pub enum Command {
     /// Turns the screen on or off. Off is backlight 0 with frames paused:
     /// the protocol has no confirmed "display off" command.
     SetScreen(bool),
+    /// Shows the calm Zen screen instead of the chosen one, or goes back.
+    SetZen(bool),
     /// Stops playback and releases the device.
     Shutdown,
 }
@@ -28,6 +30,7 @@ pub struct DaemonState {
     /// Name of the connected device, if any.
     pub device: Option<String>,
     pub screen_on: bool,
+    pub zen: bool,
 }
 
 impl Default for DaemonState {
@@ -35,6 +38,7 @@ impl Default for DaemonState {
         Self {
             device: None,
             screen_on: true,
+            zen: false,
         }
     }
 }
@@ -60,6 +64,8 @@ pub fn run_daemon(
 ) {
     let mut dev: Option<Box<dyn Display>> = None;
     let mut screen_on = true;
+    // While Zen mode is on, this plays instead of `player`.
+    let mut zen: Option<Player> = None;
     let update = |f: &dyn Fn(&mut DaemonState)| f(&mut state.lock().expect("state lock"));
 
     loop {
@@ -86,7 +92,8 @@ pub fn run_daemon(
             Some(d) => {
                 let started = Instant::now();
                 let spec = d.spec();
-                match player.next(spec.width, spec.height) {
+                let active = zen.as_mut().unwrap_or(&mut player);
+                match active.next(spec.width, spec.height) {
                     Ok(out) => match d.send_frame(out.frame.data()) {
                         Ok(()) => out
                             .hold
@@ -125,6 +132,14 @@ pub fn run_daemon(
                 }
                 Command::SetRotation(rotation) => {
                     player = Player::new(player.scene().clone(), rotation);
+                    if zen.is_some() {
+                        zen = Some(Player::new(Scene::Zen, rotation));
+                    }
+                    break;
+                }
+                Command::SetZen(on) => {
+                    zen = on.then(|| Player::new(Scene::Zen, player.rotation()));
+                    update(&|s| s.zen = on);
                     break;
                 }
                 Command::SetBrightness(percent) => {

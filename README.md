@@ -9,6 +9,11 @@ An alternative to DeepCool's Windows-only DeepCreative app.
 > OpenCreative is an independent project. It is not affiliated with or endorsed
 > by DeepCool. "DeepCool" and "DeepCreative" are trademarks of their owners.
 
+<p>
+  <img src="docs/screenshots/dashboard.png" alt="OpenCreative dashboard" width="49%">
+  <img src="docs/screenshots/device.png" alt="OpenCreative cooler screen settings" width="49%">
+</p>
+
 ## Status
 
 Early. Linux first; Windows and macOS are planned (the USB layer, `nusb`, already
@@ -23,7 +28,11 @@ a USB capture of DeepCreative (see [docs/protocol](docs/protocol/lm-series.md)).
 
 ## Features
 
-- System monitor screen: CPU temperature and load gauges, GPU temperature, RAM, clock
+- Panels screen: one large and two small readings of your choice (CPU/GPU
+  temperature, load, frequency, power, RAM), like the vendor app's digital
+  mode, in a choice of skins: **Lines** (interlocking lines over a tile grid)
+  and **HUD** (neon frames with live network and usage charts)
+- Gauges screen: CPU temperature and load gauges, GPU temperature, RAM, clock
 - Images (PNG, JPEG, WebP, BMP) and animated GIFs, with cover / contain / stretch fit
 - Solid colors, brightness 0-100, screen on/off
 - Rotation (0/90/180/270) for any pump orientation
@@ -64,11 +73,15 @@ systemctl --user enable --now opencreative
 
 ```sh
 opencreative list                      # find connected coolers
-opencreative monitor                   # live system monitor
+opencreative panels                    # live readings in panels (the default screen)
+opencreative panels --primary gpu-temp --secondary gpu-load --secondary ram-usage
+opencreative panels --skin hud          # neon skin with live charts
+opencreative monitor                   # live readings as gauges
 opencreative image wallpaper.gif       # still images or looping GIFs
 opencreative image logo.png --fit contain
 opencreative solid '#ff8800'
 opencreative brightness 60
+opencreative zen on                    # calm screen: a dim clock; `zen off` returns
 opencreative screen off                # backlight off; `screen on` restores it
 opencreative --rotate 180 monitor      # upside-down pump
 opencreative sensors                   # check which temperature sensors were found
@@ -83,18 +96,35 @@ cargo install --path crates/opencreative-gui
 opencreative-gui
 ```
 
-- **Screen**: pick the system monitor, an image/GIF (Browse… or drop a file on
-  the window) or a color, plus brightness, rotation and screen on/off — with a
-  live preview of your changes before you apply them. "Device-accurate colors"
-  shows the panel's 16-bit color exactly.
-- **Sensors**: two-minute history of CPU/GPU temperature, CPU load and RAM, and
-  every temperature sensor found.
-- **Service** (Linux): run OpenCreative in the background at login, install the
-  USB rule (asks for your password), and add OpenCreative to your app menu.
+Laid out like DeepCool's app, with a light theme (dark available):
+
+- **Dashboard**: CPU and GPU cards with load gauges, frequency, temperature and
+  power; memory, storage (read/write and per-disk usage) and network speeds;
+  a two-minute history chart.
+- **Devices**: coolers found on USB, with a live thumbnail of each screen.
+- **Cooler screen**: brightness, Zen mode (a calm clock screen), rotation, and
+  a pixel-exact live preview of what the panel shows. *Digital* mode picks a skin from a gallery of live thumbnails
+  (Lines, HUD, Gauges) and which readings to show (with recommended
+  combinations); *Multimedia* mode shows an image or
+  GIF (Browse… or drop a file on the window) or a color. Changes apply
+  immediately.
+- **Settings**: start with the computer (on by default; the background service
+  keeps the screen running from login), install the USB rule (asks for your
+  password), add OpenCreative to your app menu, Claude usage, and the theme.
+
+### Claude usage (optional)
+
+With [OpenCUT](https://github.com/siam-parvez/OpenCUT)'s `ocutd` running,
+turn on **Settings → Integrations → Claude usage** to see your Claude plan's
+5-hour and weekly usage on the dashboard, and to pick them as cooler-screen
+readings (`claude_5h`, `claude_week`, or the "Claude usage" preset).
+OpenCreative only reads OpenCUT's snapshot file
+(`$XDG_RUNTIME_DIR/opencut/usage.json`); it never contacts Anthropic or reads
+credentials. Not affiliated with Anthropic.
 
 The app talks to the daemon; if none is running it starts one inside the
-window, so the screen only keeps updating while the window is open — the
-Service tab hands it over to a background service.
+window, so the screen only keeps updating while the window is open — Settings
+hands it over to a background service.
 
 ### Daemon
 
@@ -150,9 +180,9 @@ New devices implement `Display` in `opencreative-device`; frontends don't change
 ## Credits
 
 - Protocol captures: [daedlock/deepcool-lm](https://github.com/daedlock/deepcool-lm) (MIT)
-- Font: [Rajdhani](https://fonts.google.com/specimen/Rajdhani) by Indian Type Foundry (SIL OFL 1.1)
+- Fonts: [Rajdhani](https://fonts.google.com/specimen/Rajdhani) by Indian Type Foundry, [Orbitron](https://github.com/theleagueof/orbitron) by The League of Moveable Type, and [IBM Plex Sans](https://github.com/IBM/plex) by IBM (SIL OFL 1.1)
 
 ## License
 
 Dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your option.
-The bundled font is under the [SIL Open Font License](assets/fonts/OFL.txt).
+Bundled fonts are under the SIL Open Font License: [Rajdhani](assets/fonts/OFL-Rajdhani.txt) and [Orbitron](assets/fonts/OFL-Orbitron.txt) (screen), [IBM Plex Sans](assets/fonts/OFL-IBMPlexSans.txt) (app).

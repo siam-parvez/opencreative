@@ -1,0 +1,727 @@
+//! The cooler page: what its screen shows, laid out like the vendor app's
+//! device page (display controls on the left, preview and content on the
+//! right). Every change applies immediately.
+
+use eframe::egui::{self, Color32, Sense, Stroke, vec2};
+use std::time::{Duration, Instant};
+
+use opencreative_config::{FitConfig, Metric, Rgb, SceneConfig, SkinConfig};
+use opencreative_render::panels::Layout;
+
+use crate::icons::{self, Icon};
+use crate::theme::{self, Palette};
+use crate::widgets::{section, segmented, toggle};
+use crate::{App, Page, is_digital};
+
+const CONTROLS_WIDTH: f32 = 300.0;
+/// Upper bound on how much the 320x240 preview is enlarged.
+const MAX_PREVIEW_ZOOM: f32 = 2.0;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Mode {
+    Digital,
+    Multimedia,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Source {
+    Image,
+    Color,
+}
+
+/// One-click layouts, like the vendor app's "recommended combinations".
+const PRESETS: [(&str, Metric, [Metric; 2]); 3] = [
+    (
+        "CPU monitoring",
+        Metric::CpuTemp,
+        [Metric::CpuFreq, Metric::CpuPower],
+    ),
+    (
+        "CPU and GPU",
+        Metric::CpuTemp,
+        [Metric::GpuTemp, Metric::GpuLoad],
+    ),
+    (
+        "System load",
+        Metric::CpuLoad,
+        [Metric::GpuLoad, Metric::RamUsage],
+    ),
+];
+
+/// Offered when the Claude integration is on.
+const CLAUDE_PRESET: (&str, Metric, [Metric; 2]) = (
+    "Claude usage",
+    Metric::ClaudeSession,
+    [Metric::ClaudeWeekly, Metric::CpuTemp],
+);
+
+const SWATCHES: [[u8; 3]; 8] = [
+    [0x0d, 0x9b, 0x94],
+    [0x22, 0xd3, 0xee],
+    [0x3b, 0x82, 0xf6],
+    [0x8b, 0x5c, 0xf6],
+    [0xec, 0x48, 0x99],
+    [0xef, 0x44, 0x44],
+    [0xf5, 0x9e, 0x0b],
+    [0xff, 0xff, 0xff],
+];
+
+pub fn show(app: &mut App, ui: &mut egui::Ui) {
+    let p = Palette::of(ui.ctx());
+    let mut mode = if is_digital(&app.applied.scene) {
+        Mode::Digital
+    } else {
+        Mode::Multimedia
+    };
+
+    ui.horizontal(|ui| {
+        let crumb = ui
+            .add(
+                egui::Label::new(
+                    egui::RichText::new("Devices")
+                        .font(theme::semibold(24.0))
+                        .color(p.muted),
+                )
+                .sense(Sense::click()),
+            )
+            .on_hover_cursor(egui::CursorIcon::PointingHand);
+        if crumb.clicked() {
+            app.page = Page::Devices;
+        }
+        ui.label(
+            egui::RichText::new("/")
+                .font(theme::semibold(24.0))
+                .color(p.faint),
+        );
+        let name = app
+            .device
+            .clone()
+            .unwrap_or_else(|| opencreative_device::SUPPORTED[0].name.to_owned());
+        ui.label(
+            egui::RichText::new(name)
+                .font(theme::semibold(24.0))
+                .color(p.text),
+        );
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if segmented(
+                ui,
+                &mut mode,
+                &[(Mode::Digital, "Digital"), (Mode::Multimedia, "Multimedia")],
+            ) {
+                let scene = match mode {
+                    Mode::Digital => app.digital_scene.clone(),
+                    Mode::Multimedia => app.media_scene.clone(),
+                };
+                app.set_scene(scene);
+            }
+            ui.label(egui::RichText::new("Mode").color(p.muted));
+        });
+    });
+    ui.add_space(14.0);
+
+    if app.device.is_none() {
+        notice(app, ui);
+        ui.add_space(12.0);
+    }
+
+    ui.horizontal_top(|ui| {
+        ui.vertical(|ui| {
+            ui.set_width(CONTROLS_WIDTH);
+            theme::card(ui, |ui| display_controls(app, ui, mode));
+        });
+        ui.add_space(4.0);
+        ui.vertical(|ui| {
+            theme::card(ui, |ui| {
+                preview(app, ui);
+                ui.add_space(14.0);
+                ui.separator();
+                ui.add_space(8.0);
+                match mode {
+                    Mode::Digital => digital(app, ui),
+                    Mode::Multimedia => multimedia(app, ui),
+                }
+            });
+        });
+    });
+    ui.add_space(56.0);
+}
+
+fn notice(app: &mut App, ui: &mut egui::Ui) {
+    let p = Palette::of(ui.ctx());
+    egui::Frame::new()
+        .fill(p.warn.gamma_multiply(0.12))
+        .stroke(Stroke::new(1.0, p.warn.gamma_multiply(0.5)))
+        .corner_radius(10)
+        .inner_margin(14)
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                icons::show(ui, Icon::Cooler, 20.0, p.warn);
+                ui.label(
+                    egui::RichText::new(
+                        "No cooler connected. Your changes are saved and shown as soon as one is.",
+                    )
+                    .color(p.text),
+                );
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button("Check USB access").clicked() {
+                        app.page = Page::Settings;
+                    }
+                });
+            });
+        });
+}
+
+fn display_controls(app: &mut App, ui: &mut egui::Ui, mode: Mode) {
+    let p = Palette::of(ui.ctx());
+    section(ui, "Display");
+    ui.add_space(8.0);
+
+    labelled_value(ui, "Brightness", &format!("{}%", app.brightness));
+    ui.spacing_mut().slider_width = ui.available_width();
+    let slider = ui.add(egui::Slider::new(&mut app.brightness, 0..=100).show_value(false));
+    // Send once the user lets go, not on every step of a drag.
+    if slider.drag_stopped() || (slider.changed() && !slider.dragged()) {
+        app.set_brightness(app.brightness);
+    }
+    ui.add_space(14.0);
+
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new("Zen mode").color(p.text));
+        icons::show(ui, Icon::Help, 15.0, p.faint).on_hover_text(
+            "Turns the screen off. Your layout and brightness are kept for when you turn it back on.",
+        );
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let mut zen = app.zen;
+            if toggle(ui, &mut zen).changed() {
+                app.set_zen(zen);
+            }
+        });
+    });
+    ui.add_space(14.0);
+
+    ui.label(egui::RichText::new("Rotation").color(p.text));
+    let mut rotation = app.applied.rotation;
+    if segmented(
+        ui,
+        &mut rotation,
+        &[(0, "0°"), (90, "90°"), (180, "180°"), (270, "270°")],
+    ) {
+        app.set_rotation(rotation);
+    }
+
+    if mode == Mode::Digital
+        && let Some(mut secs) = interval(&app.applied.scene)
+    {
+        ui.add_space(14.0);
+        labelled_value(ui, "Refresh every", &format!("{secs:.1} s"));
+        let slider = ui.add(egui::Slider::new(&mut secs, 0.5..=5.0).show_value(false));
+        if slider.drag_stopped() || (slider.changed() && !slider.dragged()) {
+            let mut scene = app.applied.scene.clone();
+            set_interval(&mut scene, secs);
+            app.set_scene(scene);
+        }
+    }
+}
+
+/// "Label ........ value" on one line.
+fn labelled_value(ui: &mut egui::Ui, label: &str, value: &str) {
+    let p = Palette::of(ui.ctx());
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new(label).color(p.text));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.label(egui::RichText::new(value).color(p.muted));
+        });
+    });
+}
+
+fn preview(app: &mut App, ui: &mut egui::Ui) {
+    let p = Palette::of(ui.ctx());
+    ui.horizontal(|ui| {
+        ui.label(
+            egui::RichText::new("Preview")
+                .font(theme::semibold(15.0))
+                .color(p.text),
+        );
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if icon_button(ui, Icon::Rotate, "Rotate 90°").clicked() {
+                let next = (app.applied.rotation + 90) % 360;
+                app.set_rotation(next);
+            }
+        });
+    });
+    ui.add_space(6.0);
+
+    let (w, h) = app.preview.size;
+    let pad = 10.0;
+    // Whole-number zoom in physical pixels keeps every panel pixel sharp.
+    let ppp = ui.ctx().pixels_per_point();
+    let room = (ui.available_width() - 2.0 * pad) * ppp;
+    let zoom = (room / w.max(1) as f32)
+        .floor()
+        .clamp(1.0, MAX_PREVIEW_ZOOM);
+    let screen = vec2(w as f32, h as f32) * zoom / ppp;
+    ui.vertical_centered(|ui| {
+        let (bezel, _) =
+            ui.allocate_exact_size(screen + vec2(2.0 * pad, 2.0 * pad), Sense::hover());
+        let painter = ui.painter();
+        painter.rect_filled(bezel, 16.0, p.bezel);
+        let inner = snap_to_pixels(bezel.shrink(pad), ppp, screen);
+        match &app.preview.texture {
+            Some(texture) => {
+                painter.image(
+                    texture.id(),
+                    inner,
+                    egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                    Color32::WHITE,
+                );
+            }
+            None => {
+                painter.rect_filled(inner, 2.0, Color32::BLACK);
+            }
+        }
+    });
+    if let Some(e) = &app.preview.error {
+        ui.colored_label(p.bad, e);
+    }
+}
+
+/// `rect` moved to start on a physical pixel, with exactly `size`.
+fn snap_to_pixels(rect: egui::Rect, ppp: f32, size: egui::Vec2) -> egui::Rect {
+    let min = egui::pos2(
+        (rect.min.x * ppp).round() / ppp,
+        (rect.min.y * ppp).round() / ppp,
+    );
+    egui::Rect::from_min_size(min, size)
+}
+
+fn digital(app: &mut App, ui: &mut egui::Ui) {
+    let p = Palette::of(ui.ctx());
+    let scene = app.applied.scene.clone();
+    let secs = interval(&scene).unwrap_or(1.0);
+
+    section(ui, "Skin");
+    if let Some(next) = skin_gallery(app, ui, &scene, secs) {
+        app.set_scene(next);
+        return;
+    }
+    ui.add_space(12.0);
+
+    match scene {
+        SceneConfig::Panels {
+            skin,
+            mut primary,
+            mut secondary,
+            interval_secs,
+        } => {
+            let claude = app.prefs.claude_usage;
+            section(ui, "Display data");
+            let mut changed = false;
+            egui::Grid::new("display-data")
+                .num_columns(2)
+                .spacing(vec2(16.0, 8.0))
+                .show(ui, |ui| {
+                    ui.label(egui::RichText::new("Main reading").color(p.muted));
+                    changed |= metric_combo(ui, "primary", &mut primary, claude);
+                    ui.end_row();
+                    ui.label(egui::RichText::new("Second reading").color(p.muted));
+                    changed |= metric_combo(ui, "secondary-1", &mut secondary[0], claude);
+                    ui.end_row();
+                    ui.label(egui::RichText::new("Third reading").color(p.muted));
+                    // The HUD skin charts network traffic in that spot instead.
+                    let shown = skin != SkinConfig::Hud;
+                    ui.add_enabled_ui(shown, |ui| {
+                        changed |= metric_combo(ui, "secondary-2", &mut secondary[1], claude);
+                    })
+                    .response
+                    .on_disabled_hover_text("The HUD skin shows network speeds here.");
+                    ui.end_row();
+                });
+            ui.add_space(12.0);
+
+            section(ui, "Recommended");
+            let presets = PRESETS.into_iter().chain(claude.then_some(CLAUDE_PRESET));
+            for (name, main, others) in presets {
+                let selected = primary == main && secondary == others;
+                let detail = format!(
+                    "{} (main) + {} + {}",
+                    main.name(),
+                    others[0].name(),
+                    others[1].name()
+                );
+                let response = ui.radio(selected, egui::RichText::new(name).color(p.text));
+                ui.indent(name, |ui| {
+                    ui.label(egui::RichText::new(detail).small().color(p.muted));
+                });
+                if response.clicked() && !selected {
+                    primary = main;
+                    secondary = others;
+                    changed = true;
+                }
+            }
+            if changed {
+                app.set_scene(SceneConfig::Panels {
+                    skin,
+                    primary,
+                    secondary,
+                    interval_secs,
+                });
+            }
+        }
+        _ => {
+            ui.label(
+                egui::RichText::new(
+                    "Gauges show CPU temperature and load, with GPU temperature, RAM and the clock below.",
+                )
+                .color(p.muted),
+            );
+        }
+    }
+}
+
+/// A choice in the skin gallery: a Panels skin, or the gauges screen.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Look {
+    Skin(SkinConfig),
+    Gauges,
+}
+
+impl Look {
+    const ALL: [Look; 3] = [
+        Look::Skin(SkinConfig::Lines),
+        Look::Skin(SkinConfig::Hud),
+        Look::Gauges,
+    ];
+
+    fn name(self) -> &'static str {
+        match self {
+            Look::Skin(skin) => skin.name(),
+            Look::Gauges => "Gauges",
+        }
+    }
+}
+
+/// Live thumbnails for the skin gallery, re-rendered every few seconds.
+#[derive(Default)]
+pub struct SkinThumbs {
+    rendered: Option<Instant>,
+    textures: Vec<egui::TextureHandle>,
+}
+
+const THUMB_REFRESH: Duration = Duration::from_secs(2);
+const THUMB_SIZE: egui::Vec2 = vec2(176.0, 132.0);
+
+/// Shows each look with the user's readings; returns the scene to switch to
+/// when one is clicked.
+fn skin_gallery(
+    app: &mut App,
+    ui: &mut egui::Ui,
+    scene: &SceneConfig,
+    secs: f64,
+) -> Option<SceneConfig> {
+    let p = Palette::of(ui.ctx());
+    let (current, layout) = match scene {
+        SceneConfig::Panels {
+            skin,
+            primary,
+            secondary,
+            ..
+        } => (
+            Look::Skin(*skin),
+            Layout {
+                primary: *primary,
+                secondary: *secondary,
+            },
+        ),
+        _ => (Look::Gauges, default_layout()),
+    };
+    refresh_thumbs(app, ui.ctx(), &layout);
+
+    let mut picked = None;
+    ui.horizontal_wrapped(|ui| {
+        for (look, texture) in Look::ALL.into_iter().zip(&app.skin_thumbs.textures) {
+            let selected = look == current;
+            let stroke = if selected {
+                Stroke::new(2.0, p.accent)
+            } else {
+                Stroke::new(1.0, p.border)
+            };
+            let response = egui::Frame::new()
+                .stroke(stroke)
+                .corner_radius(10)
+                .inner_margin(8)
+                .show(ui, |ui| {
+                    // Keep each card as narrow as its thumbnail.
+                    ui.set_max_width(THUMB_SIZE.x);
+                    ui.vertical_centered(|ui| {
+                        ui.add(egui::Image::new((texture.id(), THUMB_SIZE)).corner_radius(6));
+                        ui.label(egui::RichText::new(look.name()).color(if selected {
+                            p.accent
+                        } else {
+                            p.text
+                        }));
+                    });
+                })
+                .response
+                .interact(Sense::click())
+                .on_hover_cursor(egui::CursorIcon::PointingHand);
+            if response.clicked() && !selected {
+                picked = Some(look);
+            }
+        }
+    });
+    picked.map(|look| match look {
+        Look::Gauges => SceneConfig::Monitor {
+            interval_secs: secs,
+        },
+        Look::Skin(skin) => SceneConfig::Panels {
+            skin,
+            primary: layout.primary,
+            secondary: layout.secondary,
+            interval_secs: secs,
+        },
+    })
+}
+
+fn default_layout() -> Layout {
+    match SceneConfig::default() {
+        SceneConfig::Panels {
+            primary, secondary, ..
+        } => Layout { primary, secondary },
+        _ => unreachable!("the default scene is Panels"),
+    }
+}
+
+fn refresh_thumbs(app: &mut App, ctx: &egui::Context, layout: &Layout) {
+    let thumbs = &mut app.skin_thumbs;
+    let fresh = thumbs
+        .rendered
+        .is_some_and(|at| at.elapsed() < THUMB_REFRESH);
+    if fresh && thumbs.textures.len() == Look::ALL.len() {
+        return;
+    }
+    let snap = app.history.latest().cloned().unwrap_or_default();
+    let history = app.history.samples();
+    let clock = chrono::Local::now().format("%H:%M").to_string();
+    // Render at the thumbnail's exact pixel size so nothing is resampled.
+    let ppp = ctx.pixels_per_point();
+    let (w, h) = (
+        (THUMB_SIZE.x * ppp).round() as u32,
+        (THUMB_SIZE.y * ppp).round() as u32,
+    );
+    let images: Vec<_> = Look::ALL
+        .into_iter()
+        .map(|look| {
+            let frame = match look {
+                Look::Skin(skin) => {
+                    opencreative_render::panels::render(&snap, &history, layout, skin.into(), w, h)
+                }
+                Look::Gauges => opencreative_render::monitor::render(&snap, &clock, w, h),
+            };
+            let rgba = crate::panel_colors(frame.data(), w);
+            egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &rgba)
+        })
+        .collect();
+    let thumbs = &mut app.skin_thumbs;
+    if thumbs.textures.len() == images.len() {
+        for (texture, image) in thumbs.textures.iter_mut().zip(images) {
+            texture.set(image, crate::PIXEL_TEXTURE);
+        }
+    } else {
+        thumbs.textures = images
+            .into_iter()
+            .enumerate()
+            .map(|(i, image)| ctx.load_texture(format!("skin-{i}"), image, crate::PIXEL_TEXTURE))
+            .collect();
+    }
+    thumbs.rendered = Some(Instant::now());
+    ctx.request_repaint_after(THUMB_REFRESH);
+}
+
+fn metric_combo(ui: &mut egui::Ui, id: &str, metric: &mut Metric, claude: bool) -> bool {
+    let before = *metric;
+    egui::ComboBox::from_id_salt(id)
+        .width(220.0)
+        .selected_text(metric.name())
+        .show_ui(ui, |ui| {
+            // Claude readings only when the integration is turned on.
+            for m in Metric::ALL.into_iter().filter(|m| claude || !m.is_claude()) {
+                ui.selectable_value(metric, m, m.name());
+            }
+        });
+    *metric != before
+}
+
+fn multimedia(app: &mut App, ui: &mut egui::Ui) {
+    let p = Palette::of(ui.ctx());
+    let ctx = ui.ctx().clone();
+    let scene = app.applied.scene.clone();
+    let mut source = if matches!(scene, SceneConfig::Solid { .. }) {
+        Source::Color
+    } else {
+        Source::Image
+    };
+
+    section(ui, "Source");
+    if segmented(
+        ui,
+        &mut source,
+        &[(Source::Image, "Image or GIF"), (Source::Color, "Color")],
+    ) {
+        match source {
+            Source::Color => app.set_scene(SceneConfig::Solid {
+                color: Rgb(SWATCHES[0]),
+            }),
+            Source::Image => match &app.media_scene {
+                image @ SceneConfig::Image { .. } => app.set_scene(image.clone()),
+                _ => app.browse_for_image(&ctx),
+            },
+        }
+        return;
+    }
+    ui.add_space(10.0);
+
+    match scene {
+        SceneConfig::Image { path, mut fit } => {
+            drop_zone(app, ui);
+            ui.add_space(10.0);
+            let file = path.file_name().map_or_else(
+                || path.display().to_string(),
+                |f| f.to_string_lossy().into(),
+            );
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("Showing").color(p.muted));
+                ui.label(egui::RichText::new(file).color(p.text))
+                    .on_hover_text(path.display().to_string());
+            });
+            ui.add_space(6.0);
+            ui.label(egui::RichText::new("Fit").color(p.muted));
+            if segmented(
+                ui,
+                &mut fit,
+                &[
+                    (FitConfig::Cover, "Fill"),
+                    (FitConfig::Contain, "Fit"),
+                    (FitConfig::Stretch, "Stretch"),
+                ],
+            ) {
+                app.set_scene(SceneConfig::Image { path, fit });
+            }
+        }
+        SceneConfig::Solid { color } => {
+            let mut rgb = color.0;
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("Color").color(p.muted));
+                if ui.color_edit_button_srgb(&mut rgb).changed() {
+                    app.set_scene(SceneConfig::Solid { color: Rgb(rgb) });
+                }
+                ui.add_space(8.0);
+                for swatch in SWATCHES {
+                    let (rect, response) = ui.allocate_exact_size(vec2(24.0, 24.0), Sense::click());
+                    let fill = Color32::from_rgb(swatch[0], swatch[1], swatch[2]);
+                    ui.painter().circle_filled(rect.center(), 10.0, fill);
+                    let ring = if swatch == rgb { p.accent } else { p.border };
+                    ui.painter()
+                        .circle_stroke(rect.center(), 11.5, Stroke::new(1.5, ring));
+                    if response
+                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                        .clicked()
+                    {
+                        app.set_scene(SceneConfig::Solid { color: Rgb(swatch) });
+                    }
+                }
+            });
+        }
+        _ => {
+            drop_zone(app, ui);
+        }
+    }
+}
+
+fn drop_zone(app: &mut App, ui: &mut egui::Ui) {
+    let p = Palette::of(ui.ctx());
+    let ctx = ui.ctx().clone();
+    egui::Frame::new()
+        .fill(p.accent_soft)
+        .stroke(Stroke::new(1.0, p.accent.gamma_multiply(0.6)))
+        .corner_radius(10)
+        .inner_margin(18)
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.vertical_centered(|ui| {
+                icons::show(ui, Icon::Storage, 26.0, p.accent);
+                ui.label(
+                    egui::RichText::new("Drop an image or GIF anywhere on this window")
+                        .color(p.text),
+                );
+                ui.label(
+                    egui::RichText::new("PNG, JPEG, WebP, BMP or animated GIF")
+                        .small()
+                        .color(p.muted),
+                );
+                ui.add_space(4.0);
+                let browsing = app.picking_file.is_some();
+                if ui
+                    .add_enabled(!browsing, egui::Button::new("Browse…"))
+                    .clicked()
+                {
+                    app.browse_for_image(&ctx);
+                }
+            });
+        });
+}
+
+fn icon_button(ui: &mut egui::Ui, icon: Icon, tooltip: &str) -> egui::Response {
+    let p = Palette::of(ui.ctx());
+    let (rect, response) = ui.allocate_exact_size(vec2(30.0, 30.0), Sense::click());
+    if response.hovered() {
+        ui.painter().rect_filled(rect, 6.0, p.accent_soft);
+    }
+    icons::paint(ui.painter(), rect.shrink(6.0), icon, p.muted);
+    response
+        .on_hover_text(tooltip)
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+fn interval(scene: &SceneConfig) -> Option<f64> {
+    match scene {
+        SceneConfig::Panels { interval_secs, .. } | SceneConfig::Monitor { interval_secs } => {
+            Some(*interval_secs)
+        }
+        _ => None,
+    }
+}
+
+fn set_interval(scene: &mut SceneConfig, secs: f64) {
+    if let SceneConfig::Panels { interval_secs, .. } | SceneConfig::Monitor { interval_secs } =
+        scene
+    {
+        *interval_secs = secs;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn interval_is_read_and_written_for_live_scenes_only() {
+        let mut scene = SceneConfig::default();
+        set_interval(&mut scene, 2.5);
+        assert_eq!(interval(&scene), Some(2.5));
+        let mut solid = SceneConfig::Solid {
+            color: Rgb([0, 0, 0]),
+        };
+        set_interval(&mut solid, 2.5);
+        assert_eq!(interval(&solid), None);
+    }
+
+    #[test]
+    fn presets_are_distinct() {
+        for (i, a) in PRESETS.iter().enumerate() {
+            for b in &PRESETS[i + 1..] {
+                assert!((a.1, a.2) != (b.1, b.2));
+            }
+        }
+    }
+}

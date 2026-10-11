@@ -8,13 +8,14 @@ mod daemon;
 
 pub use daemon::{Command, DaemonState, run_daemon};
 
+use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::thread;
 use std::time::{Duration, Instant};
 
 use opencreative_device::{self as device, Display};
 use opencreative_render::media::{self, Fit};
-use opencreative_render::{Pixmap, Rotation, monitor, rotate, solid};
+use opencreative_render::{Pixmap, Rotation, monitor, panels, rotate, solid, zen};
 use opencreative_sensors::Sensors;
 use thiserror::Error;
 
@@ -36,8 +37,14 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// What the screen shows.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Scene {
-    /// Live system monitor, refreshed every `interval`.
+    /// Live system monitor (gauges), refreshed every `interval`.
     Monitor {
+        interval: Duration,
+    },
+    /// Chosen readings in outlined panels, refreshed every `interval`.
+    Panels {
+        layout: panels::Layout,
+        skin: panels::Skin,
         interval: Duration,
     },
     /// A still image or animated GIF.
@@ -46,13 +53,20 @@ pub enum Scene {
         fit: Fit,
     },
     Solid([u8; 3]),
+    /// A calm screen with a dim clock (Zen mode).
+    Zen,
 }
 
 impl Scene {
     /// Whether playback should wait for a device that isn't plugged in yet
     /// (a background monitor) rather than fail right away (a one-off command).
     fn waits_for_device(&self) -> bool {
-        matches!(self, Self::Monitor { .. })
+        self.is_live()
+    }
+
+    /// Whether the scene shows sensor readings.
+    fn is_live(&self) -> bool {
+        matches!(self, Self::Monitor { .. } | Self::Panels { .. } | Self::Zen)
     }
 }
 
@@ -76,17 +90,23 @@ pub struct Player {
     sensors: Option<Sensors>,
     media: Option<LoadedMedia>,
     cursor: usize,
+    /// Recent readings, oldest first, for skins that chart them.
+    history: VecDeque<opencreative_sensors::Snapshot>,
 }
+
+/// How many readings a chart covers (a minute at the default rate).
+const HISTORY: usize = 60;
 
 impl Player {
     pub fn new(scene: Scene, rotation: Rotation) -> Self {
-        let sensors = matches!(scene, Scene::Monitor { .. }).then(Sensors::new);
+        let sensors = scene.is_live().then(Sensors::new);
         Self {
             scene,
             rotation,
             sensors,
             media: None,
             cursor: 0,
+            history: VecDeque::with_capacity(HISTORY),
         }
     }
 
@@ -108,6 +128,31 @@ impl Player {
                 Ok(Output {
                     frame: rotate(&monitor::render(&snap, &clock, w, h), self.rotation),
                     hold: Some(*interval),
+                })
+            }
+            Scene::Panels {
+                layout,
+                skin,
+                interval,
+            } => {
+                let snap = self.sensors.get_or_insert_with(Sensors::new).read();
+                if self.history.len() == HISTORY {
+                    self.history.pop_front();
+                }
+                self.history.push_back(snap.clone());
+                let history = self.history.make_contiguous();
+                let frame = panels::render(&snap, history, layout, *skin, w, h);
+                Ok(Output {
+                    frame: rotate(&frame, self.rotation),
+                    hold: Some(*interval),
+                })
+            }
+            Scene::Zen => {
+                let snap = self.sensors.get_or_insert_with(Sensors::new).read();
+                let clock = chrono::Local::now().format("%H:%M").to_string();
+                Ok(Output {
+                    frame: rotate(&zen::render(&snap, &clock, w, h), self.rotation),
+                    hold: Some(Duration::from_secs(1)),
                 })
             }
             Scene::Solid(rgb) => Ok(Output {

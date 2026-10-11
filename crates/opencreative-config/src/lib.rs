@@ -19,6 +19,8 @@ use std::time::Duration;
 use opencreative_core::Scene;
 use opencreative_render::Rotation;
 use opencreative_render::media::Fit;
+use opencreative_render::panels::{Layout, Skin};
+pub use opencreative_sensors::Metric;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -86,6 +88,14 @@ pub enum SceneConfig {
     Monitor {
         interval_secs: f64,
     },
+    Panels {
+        #[serde(default)]
+        skin: SkinConfig,
+        primary: Metric,
+        secondary: [Metric; 2],
+        #[serde(default = "default_interval")]
+        interval_secs: f64,
+    },
     Image {
         path: PathBuf,
         #[serde(default)]
@@ -96,29 +106,84 @@ pub enum SceneConfig {
     },
 }
 
+fn default_interval() -> f64 {
+    1.0
+}
+
 impl Default for SceneConfig {
     fn default() -> Self {
-        Self::Monitor { interval_secs: 1.0 }
+        Self::Panels {
+            skin: SkinConfig::Lines,
+            primary: Metric::CpuTemp,
+            secondary: [Metric::CpuFreq, Metric::CpuLoad],
+            interval_secs: default_interval(),
+        }
     }
 }
 
 impl SceneConfig {
     pub fn to_scene(&self) -> std::result::Result<Scene, InvalidValue> {
-        Ok(match self {
-            Self::Monitor { interval_secs } => {
-                if !(interval_secs.is_finite() && *interval_secs > 0.0) {
-                    return Err(InvalidValue::Interval(*interval_secs));
-                }
-                Scene::Monitor {
-                    interval: Duration::from_secs_f64(*interval_secs),
-                }
+        let interval = |secs: f64| {
+            if secs.is_finite() && secs > 0.0 {
+                Ok(Duration::from_secs_f64(secs))
+            } else {
+                Err(InvalidValue::Interval(secs))
             }
+        };
+        Ok(match self {
+            Self::Monitor { interval_secs } => Scene::Monitor {
+                interval: interval(*interval_secs)?,
+            },
+            Self::Panels {
+                skin,
+                primary,
+                secondary,
+                interval_secs,
+            } => Scene::Panels {
+                skin: (*skin).into(),
+                layout: Layout {
+                    primary: *primary,
+                    secondary: *secondary,
+                },
+                interval: interval(*interval_secs)?,
+            },
             Self::Image { path, fit } => Scene::Media {
                 path: path.clone(),
                 fit: (*fit).into(),
             },
             Self::Solid { color } => Scene::Solid(color.0),
         })
+    }
+}
+
+/// Look of the Panels screen.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SkinConfig {
+    /// Thin interlocking lines over a tile grid.
+    #[default]
+    Lines,
+    /// Neon frames with live charts.
+    Hud,
+}
+
+impl SkinConfig {
+    pub const ALL: [SkinConfig; 2] = [SkinConfig::Lines, SkinConfig::Hud];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            SkinConfig::Lines => "Lines",
+            SkinConfig::Hud => "HUD",
+        }
+    }
+}
+
+impl From<SkinConfig> for Skin {
+    fn from(s: SkinConfig) -> Self {
+        match s {
+            SkinConfig::Lines => Skin::Lines,
+            SkinConfig::Hud => Skin::Hud,
+        }
     }
 }
 
