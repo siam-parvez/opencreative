@@ -2,8 +2,8 @@
 //! Anthropic with the login Claude Code already keeps on this computer.
 //!
 //! Opt-in: nothing is read or sent until [`set_enabled`] turns it on. The
-//! token comes from Claude Code's credentials (`~/.claude/.credentials.json`,
-//! or the macOS keychain), is only ever sent to [`USAGE_URL`], and is never
+//! token comes from Claude Code's credentials (`~/.claude/.credentials.json`)
+//! and is only ever sent to [`USAGE_URL`]; it is never
 //! refreshed or stored by us. A background thread polls every
 //! [`POLL_EVERY`]; results are cached in a file so the daemon and the app
 //! share one poll instead of each making their own.
@@ -234,33 +234,7 @@ fn credentials_json() -> Option<String> {
     let dir = std::env::var_os("CLAUDE_CONFIG_DIR")
         .map(PathBuf::from)
         .or_else(|| dirs::home_dir().map(|h| h.join(".claude")))?;
-    if let Ok(json) = std::fs::read_to_string(dir.join(".credentials.json")) {
-        return Some(json);
-    }
-    keychain()
-}
-
-/// On macOS Claude Code keeps its login in the keychain instead.
-#[cfg(target_os = "macos")]
-fn keychain() -> Option<String> {
-    let out = std::process::Command::new("security")
-        .args([
-            "find-generic-password",
-            "-s",
-            "Claude Code-credentials",
-            "-w",
-        ])
-        .output()
-        .ok()?;
-    out.status
-        .success()
-        .then(|| String::from_utf8(out.stdout).ok())
-        .flatten()
-}
-
-#[cfg(not(target_os = "macos"))]
-fn keychain() -> Option<String> {
-    None
+    std::fs::read_to_string(dir.join(".credentials.json")).ok()
 }
 
 fn fetch(token: &str, now: DateTime<Utc>) -> Result<Cached, Status> {

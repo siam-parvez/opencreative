@@ -1,5 +1,7 @@
 //! `opencreative` command-line tool.
 
+mod uninstall;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::thread;
@@ -106,6 +108,16 @@ enum Command {
         #[arg(long)]
         config: Option<PathBuf>,
     },
+    /// Remove OpenCreative installed from a download (not a package): the
+    /// program, background service, app-menu entry and udev rules.
+    Uninstall {
+        /// Also remove your settings.
+        #[arg(long)]
+        purge: bool,
+        /// Don't ask for confirmation.
+        #[arg(long, short)]
+        yes: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -182,6 +194,7 @@ fn main() -> Result<()> {
         Command::Sensors => sensors(),
         Command::Preview { what, output } => preview(what, &output, rotation.unwrap_or_default()),
         Command::Daemon { config } => opencreative_daemon::run(config),
+        Command::Uninstall { purge, yes } => uninstall::run(purge, yes),
         Command::Status => status(connect_daemon(cli.no_daemon)?),
         command => match connect_daemon(cli.no_daemon)? {
             Some(client) => send_to_daemon(client, command, cli.rotate, serial),

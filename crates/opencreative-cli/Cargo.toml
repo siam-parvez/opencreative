@@ -21,6 +21,7 @@ opencreative-device.workspace = true
 opencreative-render.workspace = true
 opencreative-sensors.workspace = true
 anyhow.workspace = true
+dirs.workspace = true
 toml.workspace = true
 clap.workspace = true
 chrono.workspace = true

@@ -11,7 +11,6 @@ mod icons;
 mod pages;
 mod prefs;
 mod sensors;
-#[cfg(target_os = "linux")]
 mod service;
 mod theme;
 mod widgets;
@@ -102,57 +101,6 @@ fn icon_rgba(size: u32) -> Vec<u8> {
         .collect()
 }
 
-/// Desktop integration that only exists on Linux so far.
-#[cfg(not(target_os = "linux"))]
-mod service {
-    pub type Result<T> = std::result::Result<T, String>;
-
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    pub struct ServiceState {
-        pub installed: bool,
-        pub enabled: bool,
-        pub active: bool,
-    }
-
-    pub fn query() -> ServiceState {
-        ServiceState {
-            installed: false,
-            enabled: false,
-            active: false,
-        }
-    }
-    pub fn enable() -> Result<()> {
-        Err("not supported on this platform yet".into())
-    }
-    pub fn disable() -> Result<()> {
-        enable()
-    }
-    pub fn udev_rule_installed() -> bool {
-        true
-    }
-    pub fn udev_install_command() -> String {
-        String::new()
-    }
-    pub fn install_udev_rule() -> Result<()> {
-        enable()
-    }
-    pub fn desktop_entry_installed() -> bool {
-        false
-    }
-    pub fn install_desktop_entry() -> Result<()> {
-        enable()
-    }
-    pub fn remove_desktop_entry() -> Result<()> {
-        enable()
-    }
-    pub fn power_rule_installed() -> bool {
-        false
-    }
-    pub fn set_power_rule(_on: bool) -> Result<()> {
-        enable()
-    }
-}
-
 pub const SERVICE_SUPPORTED: bool = cfg!(target_os = "linux");
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -237,6 +185,10 @@ struct ScreenshotJob {
 /// A slow job (a password prompt) running off the UI thread.
 type Task = Receiver<(&'static str, service::Result<()>)>;
 
+/// The background task that uninstalls the app; the window closes when it
+/// succeeds.
+pub const UNINSTALLING: &str = "Uninstalling OpenCreative";
+
 pub struct App {
     pub page: Page,
     client: Option<ipc::Client>,
@@ -262,6 +214,11 @@ pub struct App {
     pub service: Option<service::ServiceState>,
     pub picking_file: Option<Receiver<Option<PathBuf>>>,
     pub task: Option<Task>,
+    /// Set once uninstalled: the window closes on the next frame.
+    closing: bool,
+    /// The uninstall confirmation, when open, with its "remove settings"
+    /// choice.
+    pub uninstall_prompt: Option<bool>,
     toast: Option<Toast>,
     pub prefs: prefs::Prefs,
     logo: Option<egui::TextureHandle>,
@@ -288,10 +245,16 @@ impl App {
         }
         cc.egui_ctx.set_theme(appearance.preference());
 
+        // `--uninstall` (the app menu's "Uninstall" action) opens the prompt.
+        let uninstall = std::env::args().any(|a| a == "--uninstall");
         let page = std::env::var("OPENCREATIVE_PAGE")
             .ok()
             .and_then(|p| Page::parse(&p))
-            .unwrap_or(Page::Dashboard);
+            .unwrap_or(if uninstall {
+                Page::Settings
+            } else {
+                Page::Dashboard
+            });
         let screenshot = std::env::var_os("OPENCREATIVE_SCREENSHOT").map(|path| ScreenshotJob {
             path: path.into(),
             requested: false,
@@ -328,6 +291,8 @@ impl App {
             service: None,
             picking_file: None,
             task: None,
+            uninstall_prompt: uninstall.then_some(false),
+            closing: false,
             toast: None,
             prefs: prefs::Prefs {
                 appearance,
@@ -626,6 +591,11 @@ impl App {
         }
         if let Some(rx) = &self.task {
             match rx.try_recv() {
+                Ok((label, Ok(()))) if label == UNINSTALLING => {
+                    self.task = None;
+                    self.stop_embedded();
+                    self.closing = true;
+                }
                 Ok((label, Ok(()))) => {
                     self.task = None;
                     self.notify(format!("{label}: done."));
@@ -901,6 +871,83 @@ impl App {
         }
     }
 
+    /// Asks before uninstalling, offering to remove the settings too.
+    fn uninstall_dialog(&mut self, ctx: &egui::Context) {
+        let Some(mut purge) = self.uninstall_prompt else {
+            return;
+        };
+        let p = Palette::of(ctx);
+        let busy = self.task.is_some();
+        let mut choice = None;
+        egui::Modal::new(egui::Id::new("uninstall"))
+            .frame(
+                Frame::new()
+                    .fill(p.card)
+                    .stroke(Stroke::new(1.0, p.border))
+                    .corner_radius(12)
+                    .inner_margin(Margin::same(24)),
+            )
+            .show(ctx, |ui| {
+                ui.set_width(420.0);
+                ui.label(
+                    egui::RichText::new("Uninstall OpenCreative?")
+                        .font(theme::semibold(18.0))
+                        .color(p.text),
+                );
+                ui.add_space(6.0);
+                if service::packaged() {
+                    ui.label(
+                        egui::RichText::new(
+                            "OpenCreative was installed by your package manager. Remove it from \
+                             your software center, or with `sudo apt remove opencreative` \
+                             (Debian, Ubuntu) or `sudo dnf remove opencreative` (Fedora).",
+                        )
+                        .color(p.muted),
+                    );
+                    ui.add_space(16.0);
+                    if ui.button("Close").clicked() {
+                        choice = Some(false);
+                    }
+                    return;
+                }
+                ui.label(
+                    egui::RichText::new(
+                        "This removes the program, the background service, the app-menu entry \
+                         and the USB rule (which asks for your password). The cooler keeps \
+                         showing its last frame until it's unplugged.",
+                    )
+                    .color(p.muted),
+                );
+                ui.add_space(10.0);
+                ui.checkbox(&mut purge, "Also remove my settings");
+                ui.add_space(16.0);
+                ui.horizontal(|ui| {
+                    let uninstall =
+                        egui::Button::new(egui::RichText::new("Uninstall").color(Color32::WHITE))
+                            .fill(p.bad)
+                            .stroke(Stroke::NONE);
+                    if ui.add_enabled(!busy, uninstall).clicked() {
+                        choice = Some(true);
+                    }
+                    if ui.add_enabled(!busy, egui::Button::new("Cancel")).clicked() {
+                        choice = Some(false);
+                    }
+                    if busy {
+                        ui.spinner();
+                    }
+                });
+            });
+        self.uninstall_prompt = Some(purge);
+        match choice {
+            Some(true) if purge => {
+                self.run_task(ctx, UNINSTALLING, || service::uninstall(true));
+            }
+            Some(true) => self.run_task(ctx, UNINSTALLING, || service::uninstall(false)),
+            Some(false) => self.uninstall_prompt = None,
+            None => {}
+        }
+    }
+
     /// Transient messages in the bottom-right corner.
     fn toasts(&mut self, ctx: &egui::Context) {
         let p = Palette::of(ctx);
@@ -1100,6 +1147,10 @@ impl eframe::App for App {
                     });
             });
         self.toasts(&ctx);
+        self.uninstall_dialog(&ctx);
+        if self.closing {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
         // Without the system frame: a hairline under the title bar and
         // around the window.
         let painter = ctx.layer_painter(egui::LayerId::new(

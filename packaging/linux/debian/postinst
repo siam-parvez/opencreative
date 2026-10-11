@@ -1,0 +1,7 @@
+#!/bin/sh
+set -e
+# Apply the USB access rule to a cooler that's already plugged in.
+if command -v udevadm >/dev/null 2>&1; then
+    udevadm control --reload || true
+    udevadm trigger --subsystem-match=usb --attr-match=idVendor=3633 || true
+fi

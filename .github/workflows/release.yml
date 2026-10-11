@@ -1,5 +1,6 @@
-# Push a tag like `v0.1.0` (matching the workspace version) to build binaries
-# for every platform and publish them as a GitHub release.
+# Push a tag like `v0.3.0` (matching the workspace version) to build Linux
+# packages for x86_64 and ARM64 and publish them as a GitHub release:
+# a tarball, a .deb, an .rpm and an AppImage per architecture.
 name: Release
 
 on:
@@ -26,54 +27,56 @@ jobs:
           fi
 
   build:
-    name: Build ${{ matrix.target }}
+    name: Build ${{ matrix.arch }}
     needs: check-version
     strategy:
       fail-fast: false
       matrix:
         include:
-          # Oldest supported Ubuntu runners keep the glibc requirement low.
-          - { os: ubuntu-22.04, target: x86_64-unknown-linux-gnu }
-          - { os: ubuntu-22.04-arm, target: aarch64-unknown-linux-gnu }
-          - { os: windows-latest, target: x86_64-pc-windows-msvc }
-          - { os: macos-latest, target: aarch64-apple-darwin }
-          - { os: macos-latest, target: x86_64-apple-darwin }
+          # The oldest supported Ubuntu keeps the glibc requirement low.
+          - { os: ubuntu-22.04, arch: x86_64, target: x86_64-unknown-linux-gnu }
+          - { os: ubuntu-22.04-arm, arch: aarch64, target: aarch64-unknown-linux-gnu }
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
         with:
-          key: ${{ matrix.target }}
-      - run: cargo build --release --locked --target ${{ matrix.target }} -p opencreative-cli -p opencreative-gui
+          tool: cargo-deb,cargo-generate-rpm
+      - name: Build
+        run: cargo build --release --locked -p opencreative-cli -p opencreative-gui
 
-      - name: Package
-        shell: bash
+      - name: Tarball
         run: |
           name="opencreative-${GITHUB_REF_NAME}-${{ matrix.target }}"
           mkdir -p "dist/$name"
-          for bin in opencreative opencreative-gui; do
-            path="target/${{ matrix.target }}/release/$bin"
-            [ -f "$path.exe" ] && path="$path.exe"
-            cp "$path" "dist/$name/"
-          done
+          cp target/release/opencreative target/release/opencreative-gui "dist/$name/"
           cp README.md LICENSE-MIT LICENSE-APACHE "dist/$name/"
-          case "${{ matrix.target }}" in
-            *linux*) cp -r packaging/linux "dist/$name/packaging" ;;
-          esac
-          cd dist
-          if [[ "${{ matrix.target }}" == *windows* ]]; then
-            7z a "$name.zip" "$name" >/dev/null
-          else
-            tar czf "$name.tar.gz" "$name"
-          fi
-          rm -rf "$name"
+          cp -r packaging/linux "dist/$name/packaging"
+          tar -C dist -czf "dist/$name.tar.gz" "$name"
+          rm -r "dist/$name"
+
+      - name: .deb and .rpm
+        run: |
+          cargo deb -p opencreative-gui --no-build --output dist/
+          cargo generate-rpm -p crates/opencreative-gui --output dist/
+
+      - name: AppImage
+        env:
+          # Runners have no FUSE; run appimagetool from its extracted files.
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+        run: |
+          mkdir -p tools
+          curl -sSfL -o tools/appimagetool \
+            "https://github.com/AppImage/appimagetool/releases/download/1.9.0/appimagetool-${{ matrix.arch }}.AppImage"
+          chmod +x tools/appimagetool
+          PATH="$PWD/tools:$PATH" packaging/linux/build-appimage.sh target/release \
+            ${{ matrix.arch }} "dist/OpenCreative-${GITHUB_REF_NAME}-${{ matrix.arch }}.AppImage"
 
       - uses: actions/upload-artifact@v7
         with:
-          name: ${{ matrix.target }}
+          name: ${{ matrix.arch }}
           path: dist/*
 
   publish:

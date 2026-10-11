@@ -32,15 +32,15 @@ What the cooler shows, rendered at the panel's 320x240 (shown at 2x):
 
 ## Status
 
-Early. Linux first; Windows and macOS are planned (the USB layer, `nusb`, already
-supports all three).
+Early. Linux only for now.
 
 | Device | USB ID | Screen | Status |
 |---|---|---|---|
 | LM240 / LM360 | `3633:0026` | 320x240 | Supported |
 
-Want your cooler supported? Open an issue with the output of `lsusb` and, ideally,
-a USB capture of DeepCreative (see [docs/protocol](docs/protocol/lm-series.md)).
+Want your cooler supported? [Adding a device](docs/adding-a-device.md) lists
+what we need from you: the model, `lsusb` output, a quick test, and ideally a
+USB capture of DeepCreative.
 
 ## Features
 
@@ -61,30 +61,56 @@ a USB capture of DeepCreative (see [docs/protocol](docs/protocol/lm-series.md)).
 - Survives cooler replug and suspend/resume
 - `preview` renders screens to PNG without hardware
 
-## Install (Linux)
+## Install
 
-Prebuilt binaries for Linux (x86_64, ARM64), Windows and macOS are attached to
-each [release](https://github.com/siam-parvez/opencreative/releases).
+OpenCreative runs on Linux (x86_64 and ARM64). Each
+[release](https://github.com/siam-parvez/opencreative/releases) has:
 
-To build from source you need a C toolchain (for Rust's linker) and Rust.
+| File | For |
+|---|---|
+| `opencreative_<version>_amd64.deb` / `_arm64.deb` | Debian, Ubuntu, Mint, Pop!_OS |
+| `opencreative-<version>.x86_64.rpm` / `.aarch64.rpm` | Fedora, openSUSE |
+| `OpenCreative-<version>-x86_64.AppImage` | any distribution, no install |
+| `opencreative-<version>-<target>.tar.gz` | the binaries, to install by hand |
+
+**Packages** install everything: the app (in your app menu), the
+`opencreative` command, USB access for the cooler and the background
+service. Open the `.deb` or `.rpm` in your software center, or:
+
+```sh
+sudo apt install ./opencreative_*_amd64.deb      # Debian, Ubuntu
+sudo dnf install ./opencreative-*.x86_64.rpm     # Fedora
+```
+
+**AppImage**: make it executable and run it. **Settings** inside the app
+adds it to the app menu, allows USB access (asks for your password) and
+starts it with the computer.
+
+### Uninstall
+
+- Packages: remove **OpenCreative** in your software center, or
+  `sudo apt remove opencreative` / `sudo dnf remove opencreative`.
+- AppImage, tarball or a source build: right-click OpenCreative in the app
+  menu → **Uninstall OpenCreative**, use **Settings → Uninstall**, or run
+  `opencreative uninstall` (add `--purge` to remove your settings too).
+
+### Build from source
+
+You need a C toolchain (for Rust's linker) and Rust:
 
 ```sh
 sudo apt install build-essential          # Debian/Ubuntu
 curl https://sh.rustup.rs -sSf | sh       # if Rust isn't installed
 cargo install --path crates/opencreative-cli
+cargo install --path crates/opencreative-gui
 ```
 
-Allow your user to access the cooler without root:
+Then open `opencreative-gui` and use **Settings** for USB access, the app
+menu and starting with the computer, or do it by hand:
 
 ```sh
 sudo cp packaging/linux/60-opencreative.rules /etc/udev/rules.d/
 sudo udevadm control --reload && sudo udevadm trigger
-```
-
-Run the daemon on login, so the screen is always driven and your choices
-persist across reboots:
-
-```sh
 mkdir -p ~/.config/systemd/user
 cp packaging/linux/opencreative.service ~/.config/systemd/user/
 systemctl --user daemon-reload
@@ -143,7 +169,7 @@ cooler-screen readings (`claude_5h`, `claude_week`, or the "Claude usage"
 preset).
 
 It's off until you turn it on. It reuses the login Claude Code already keeps
-on this computer (`~/.claude/.credentials.json`, or the keychain on macOS),
+on this computer (`~/.claude/.credentials.json`),
 sends it only to Anthropic's usage endpoint, checks every 90 seconds, and
 never refreshes or stores the token. If the login has expired, run `claude`
 once. Not affiliated with Anthropic.
@@ -170,8 +196,8 @@ interval_secs = 1.0
 ```
 
 Without a daemon, commands drive the device directly; `--no-daemon` forces
-that. The daemon is Linux/macOS only for now (Unix socket at
-`$XDG_RUNTIME_DIR/opencreative.sock`); on Windows commands always run directly.
+that. The daemon listens on a Unix socket at
+`$XDG_RUNTIME_DIR/opencreative.sock`.
 
 ## Architecture
 
@@ -197,10 +223,10 @@ New devices implement `Display` in `opencreative-device`; frontends don't change
 - [x] GUI polish: file picker, sensor history, service page, app menu entry + icon
 - [ ] Tray icon (needs GTK3 dev libraries on Linux; the background service covers most of the need)
 - [x] Config file + background daemon with IPC so the GUI and CLI share one device
-- [ ] Daemon on Windows (named pipe)
 - [ ] Theme engine: user-defined layouts (TOML), custom fonts and backgrounds
 - [ ] More sensors: NVIDIA GPU (NVML), fan/pump RPM, network, disk
-- [ ] Windows (WinUSB) and macOS builds, CI release artifacts
+- [x] Linux packages: .deb, .rpm, AppImage, uninstall from the app menu
+- [ ] Windows and macOS (later, maybe)
 - [ ] More DeepCool devices: Mystique, LQ, LP, AK/LS/LD digital series
 
 ## Credits
