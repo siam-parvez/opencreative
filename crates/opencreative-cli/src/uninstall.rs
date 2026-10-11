@@ -101,6 +101,8 @@ fn plan(exe: &Path, appimage: Option<PathBuf>, purge: bool) -> Plan {
     if let Some(data) = dirs::data_dir() {
         user.push(data.join("applications/opencreative.desktop"));
         user.push(data.join("icons/hicolor/256x256/apps/opencreative.png"));
+        // Tools the app downloaded (yt-dlp) for video playback.
+        user.push(data.join("opencreative"));
     }
     if let Some(dir) = dirs::runtime_dir().or_else(dirs::cache_dir) {
         user.push(dir.join("opencreative"));
