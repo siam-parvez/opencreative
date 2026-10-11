@@ -2630,6 +2630,7 @@ dependencies = [
  "serde",
  "tiny-skia 0.12.0",
  "toml",
+ "ureq",
 ]
 
 [[package]]
@@ -2656,8 +2657,10 @@ name = "opencreative-render"
 version = "0.2.0"
 dependencies = [
  "ab_glyph",
+ "dirs",
  "image",
  "opencreative-sensors",
+ "thiserror 2.0.21",
  "tiny-skia 0.12.0",
 ]
 

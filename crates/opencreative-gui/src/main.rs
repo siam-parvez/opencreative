@@ -22,7 +22,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use eframe::egui::{self, Align2, Color32, Frame, Margin, Sense, Stroke, pos2, vec2};
-use opencreative_config::{Config, Rgb, SceneConfig};
+use opencreative_config::{Config, MediaItem, Rgb, SceneConfig};
 use opencreative_core::Player;
 use opencreative_daemon::Daemon;
 use opencreative_ipc::{self as ipc, Request, Response};
@@ -43,6 +43,8 @@ const SERVICE_START_TIMEOUT: Duration = Duration::from_secs(10);
 const DEVICE_SCAN: Duration = Duration::from_secs(3);
 const TOAST_FOR: Duration = Duration::from_secs(4);
 const IMAGE_EXTENSIONS: [&str; 6] = ["png", "jpg", "jpeg", "gif", "webp", "bmp"];
+/// How long each playlist item shows when there are several, by default.
+pub const DEFAULT_ITEM_SECS: f64 = 10.0;
 const SIDEBAR_WIDTH: f32 = 212.0;
 const TITLE_HEIGHT: f32 = 40.0;
 
@@ -205,6 +207,15 @@ pub struct App {
     /// The last choice in each mode, so switching modes restores it.
     pub digital_scene: SceneConfig,
     pub media_scene: SceneConfig,
+    /// A media scene being edited (dragging to pan, zoom slider): the
+    /// preview shows it, and it's sent to the cooler when the edit ends.
+    pub draft_scene: Option<SceneConfig>,
+    /// The playlist item the crop controls and preview dragging apply to.
+    pub selected_item: usize,
+    /// When the draft last changed; it's sent once edits pause.
+    draft_touched: Instant,
+    /// The web address being typed on the Multimedia page.
+    pub url_input: String,
     pub preview: Preview,
     pub skin_thumbs: pages::device::SkinThumbs,
     pub history: SensorHistory,
@@ -212,7 +223,7 @@ pub struct App {
     pub devices: Vec<DeviceRow>,
     devices_next: Instant,
     pub service: Option<service::ServiceState>,
-    pub picking_file: Option<Receiver<Option<PathBuf>>>,
+    pub picking_file: Option<Receiver<Vec<PathBuf>>>,
     pub task: Option<Task>,
     /// Set once uninstalled: the window closes on the next frame.
     closing: bool,
@@ -274,6 +285,10 @@ impl App {
             brightness: 100,
             digital_scene: SceneConfig::default(),
             media_scene: default_media_scene(),
+            draft_scene: None,
+            selected_item: 0,
+            draft_touched: Instant::now(),
+            url_input: String::new(),
             applied,
             preview: Preview {
                 player: None,
@@ -443,12 +458,20 @@ impl App {
     /// Shows `scene` on the cooler now and remembers it for its mode.
     pub fn set_scene(&mut self, mut scene: SceneConfig) {
         // The daemon has its own working directory.
-        if let SceneConfig::Image { path, .. } = &mut scene {
+        let paths: Vec<&mut PathBuf> = match &mut scene {
+            SceneConfig::Image { path, .. } => vec![path],
+            SceneConfig::Media { items, .. } => {
+                items.iter_mut().filter_map(|i| i.path.as_mut()).collect()
+            }
+            _ => Vec::new(),
+        };
+        for path in paths {
             match fs::canonicalize(&*path) {
                 Ok(absolute) => *path = absolute,
                 Err(e) => return self.fail(format!("{}: {e}", path.display())),
             }
         }
+        self.draft_scene = None;
         if is_digital(&scene) {
             self.digital_scene = scene.clone();
         } else {
@@ -537,27 +560,93 @@ impl App {
         self.task = Some(rx);
     }
 
-    pub fn browse_for_image(&mut self, ctx: &egui::Context) {
+    /// Opens a file picker for images, GIFs and videos (several at once).
+    pub fn browse_for_media(&mut self, ctx: &egui::Context) {
         let (tx, rx) = mpsc::channel();
         let ctx = ctx.clone();
         thread::spawn(move || {
+            let mut all: Vec<&str> = IMAGE_EXTENSIONS.to_vec();
+            all.extend(opencreative_render::media::VIDEO_EXTENSIONS);
             let dialog = rfd::AsyncFileDialog::new()
-                .set_title("Choose an image or GIF")
-                .add_filter("Images", &IMAGE_EXTENSIONS);
-            let picked = pollster::block_on(dialog.pick_file()).map(|f| f.path().to_owned());
+                .set_title("Add images, GIFs or videos")
+                .add_filter("Images and videos", &all)
+                .add_filter("Images and GIFs", &IMAGE_EXTENSIONS)
+                .add_filter("Videos", &opencreative_render::media::VIDEO_EXTENSIONS);
+            let picked = pollster::block_on(dialog.pick_files())
+                .map(|files| files.iter().map(|f| f.path().to_owned()).collect())
+                .unwrap_or_default();
             let _ = tx.send(picked);
             ctx.request_repaint();
         });
         self.picking_file = Some(rx);
     }
 
-    pub fn show_image(&mut self, path: PathBuf) {
-        let fit = match &self.media_scene {
-            SceneConfig::Image { fit, .. } => *fit,
-            _ => Default::default(),
-        };
-        self.set_scene(SceneConfig::Image { path, fit });
+    /// The media playlist the cooler shows (or would show) in Multimedia
+    /// mode, and the seconds per item.
+    pub fn playlist(&self) -> (Vec<MediaItem>, f64) {
+        let scene = self.draft_scene.as_ref().unwrap_or(&self.media_scene);
+        match scene {
+            SceneConfig::Media { items, item_secs } => (items.clone(), *item_secs),
+            SceneConfig::Image { path, fit } => (
+                vec![MediaItem {
+                    fit: *fit,
+                    ..MediaItem::file(path.clone())
+                }],
+                DEFAULT_ITEM_SECS,
+            ),
+            _ => (Vec::new(), DEFAULT_ITEM_SECS),
+        }
+    }
+
+    /// Shows a playlist on the cooler (or, with `draft`, only in the
+    /// preview until the edit ends).
+    pub fn set_playlist(&mut self, items: Vec<MediaItem>, item_secs: f64, draft: bool) {
+        let scene = SceneConfig::Media { items, item_secs };
+        if draft {
+            self.draft_scene = Some(scene);
+            self.draft_touched = Instant::now();
+        } else {
+            self.set_scene(scene);
+        }
+    }
+
+    /// Sends the draft to the cooler once the pointer is up and edits have
+    /// paused, so dragging doesn't reload the video on every frame.
+    fn commit_draft_if_idle(&mut self, ctx: &egui::Context) {
+        const SETTLE: Duration = Duration::from_millis(500);
+        if self.draft_scene.is_none() {
+            return;
+        }
+        let pointer_down = ctx.input(|i| i.pointer.any_down());
+        let idle = self.draft_touched.elapsed();
+        if !pointer_down && idle >= SETTLE {
+            if let Some(scene) = self.draft_scene.take() {
+                self.set_scene(scene);
+            }
+        } else {
+            ctx.request_repaint_after(SETTLE.saturating_sub(idle));
+        }
+    }
+
+    /// Adds files to the end of the playlist and shows it.
+    pub fn add_media(&mut self, paths: Vec<PathBuf>) {
+        if paths.is_empty() {
+            return;
+        }
+        let (mut items, secs) = self.playlist();
+        let first_new = items.len();
+        items.extend(paths.into_iter().map(MediaItem::file));
+        self.selected_item = first_new;
+        self.set_playlist(items, secs, false);
         self.page = Page::Device;
+    }
+
+    /// Adds a web address (YouTube or a direct video link).
+    pub fn add_url(&mut self, url: String) {
+        let (mut items, secs) = self.playlist();
+        self.selected_item = items.len();
+        items.push(MediaItem::web(url));
+        self.set_playlist(items, secs, false);
     }
 
     pub fn notify(&mut self, text: impl Into<String>) {
@@ -581,11 +670,11 @@ impl App {
     fn poll_background(&mut self) {
         if let Some(rx) = &self.picking_file {
             match rx.try_recv() {
-                Ok(Some(path)) => {
+                Ok(paths) => {
                     self.picking_file = None;
-                    self.show_image(path);
+                    self.add_media(paths);
                 }
-                Ok(None) | Err(TryRecvError::Disconnected) => self.picking_file = None,
+                Err(TryRecvError::Disconnected) => self.picking_file = None,
                 Err(TryRecvError::Empty) => {}
             }
         }
@@ -612,9 +701,8 @@ impl App {
 
     fn handle_dropped_files(&mut self, ctx: &egui::Context) {
         let dropped = ctx.input(|i| i.raw.dropped_files.clone());
-        if let Some(file) = dropped.first() {
-            self.show_image(file.path().to_owned());
-        }
+        let paths: Vec<PathBuf> = dropped.iter().map(|f| f.path().to_owned()).collect();
+        self.add_media(paths);
     }
 
     fn scan_devices(&mut self) {
@@ -639,7 +727,11 @@ impl App {
     /// Re-renders the preview when the scene changes or a frame is due.
     fn update_preview(&mut self, ctx: &egui::Context) {
         let p = &mut self.preview;
-        let key = (self.applied.scene.clone(), self.applied.rotation, self.zen);
+        let scene = self
+            .draft_scene
+            .clone()
+            .unwrap_or_else(|| self.applied.scene.clone());
+        let key = (scene, self.applied.rotation, self.zen);
         let rotation = Rotation::from_degrees(self.applied.rotation).unwrap_or_default();
         let spec = &opencreative_device::SUPPORTED[0];
         // Upright, as it looks on the mounted pump.
@@ -1105,6 +1197,7 @@ impl eframe::App for App {
         self.poll();
         self.poll_background();
         self.handle_dropped_files(&ctx);
+        self.commit_draft_if_idle(&ctx);
         if matches!(self.page, Page::Device | Page::Devices) {
             self.update_preview(&ctx);
         }

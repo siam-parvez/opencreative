@@ -13,3 +13,5 @@ opencreative-sensors.workspace = true
 tiny-skia.workspace = true
 ab_glyph.workspace = true
 image.workspace = true
+thiserror.workspace = true
+dirs.workspace = true

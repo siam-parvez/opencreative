@@ -55,7 +55,10 @@ USB capture of DeepCreative.
   which makes the energy counters readable by every user: a known side
   channel (CVE-2020-8694), so it's off by default
 - Gauges screen: CPU temperature and load gauges, GPU temperature, RAM, clock
-- Images (PNG, JPEG, WebP, BMP) and animated GIFs, with cover / contain / stretch fit
+- Playlists of images (PNG, JPEG, WebP, BMP), animated GIFs and videos
+  (MP4, WebM, MKV…) or YouTube links, each with fill / fit / stretch and a
+  zoom you set by dragging and scrolling on the preview. Videos need
+  `ffmpeg`; YouTube needs `yt-dlp` (the app can download it for you)
 - Solid colors, brightness 0-100, screen on/off
 - Rotation (0/90/180/270) for any pump orientation
 - Survives cooler replug and suspend/resume
@@ -125,8 +128,11 @@ opencreative panels                    # live readings in panels (the default sc
 opencreative panels --primary gpu-temp --secondary gpu-load --secondary ram-usage
 opencreative panels --skin hud          # neon skin with live charts
 opencreative monitor                   # live readings as gauges
-opencreative image wallpaper.gif       # still images or looping GIFs
-opencreative image logo.png --fit contain
+opencreative media wallpaper.gif       # still images or looping GIFs
+opencreative media logo.png --fit contain
+opencreative media a.png b.gif clip.mp4 --seconds 15   # a playlist
+opencreative media cat.jpg --zoom 2 --focus 0.3,0.4    # zoom in on a point
+opencreative media "https://www.youtube.com/watch?v=…" # needs ffmpeg + yt-dlp
 opencreative solid '#ff8800'
 opencreative brightness 60
 opencreative zen on                    # calm screen: a dim clock; `zen off` returns

@@ -32,6 +32,7 @@ toml.workspace = true
 tiny-skia.workspace = true
 egui_extras = { version = "0.36", default-features = false, features = ["svg", "image"] }
 image.workspace = true
+ureq = { version = "3", default-features = false, features = ["rustls"] }
 log.workspace = true
 env_logger.workspace = true
 
@@ -46,6 +47,8 @@ license-file = ["../../LICENSE-MIT", "0"]
 section = "utils"
 priority = "optional"
 depends = "$auto"
+# Videos and YouTube play through ffmpeg.
+recommends = "ffmpeg"
 extended-description = """\
 Open-source control for DeepCool LCD coolers (LM240, LM360): live readings \
 in a choice of skins, images and GIFs, and a dashboard of this computer's \
@@ -80,3 +83,6 @@ assets = [
     { source = "../../packaging/linux/io.github.siam_parvez.opencreative.metainfo.xml", dest = "/usr/share/metainfo/io.github.siam_parvez.opencreative.metainfo.xml", mode = "644" },
     { source = "../../README.md", dest = "/usr/share/doc/opencreative/README.md", mode = "644", doc = true },
 ]
+
+[package.metadata.generate-rpm.recommends]
+ffmpeg = "*"
