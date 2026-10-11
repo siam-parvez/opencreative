@@ -8,6 +8,7 @@ mod usb;
 
 use std::time::Duration;
 
+use nusb::MaybeFuture;
 use thiserror::Error;
 
 pub use lm::LmSeries;
@@ -36,7 +37,7 @@ pub enum Error {
     )]
     PermissionDenied,
     #[error("USB error: {0}")]
-    Usb(#[from] std::io::Error),
+    Usb(#[from] nusb::Error),
     #[error("USB transfer failed: {0}")]
     Transfer(#[from] nusb::transfer::TransferError),
     #[error("USB transfer timed out after {0:?}")]
@@ -69,8 +70,10 @@ impl Found {
         self.info.serial_number()
     }
 
-    pub fn bus(&self) -> u8 {
-        self.info.bus_number()
+    /// Bus identifier. Its format is OS-specific: zero-padded decimal on
+    /// Linux, hex on macOS, a location path such as `PCIROOT(0)#...` on Windows.
+    pub fn bus(&self) -> &str {
+        self.info.bus_id()
     }
 
     pub fn address(&self) -> u8 {
@@ -86,7 +89,8 @@ impl Found {
 
 /// Lists all supported devices currently plugged in.
 pub fn discover() -> Result<Vec<Found>> {
-    Ok(nusb::list_devices()?
+    Ok(nusb::list_devices()
+        .wait()?
         .filter_map(|info| {
             SUPPORTED
                 .iter()
