@@ -122,7 +122,11 @@ mod linux {
         }
 
         pub fn read(&mut self) -> Watts {
-            let now = Instant::now();
+            self.read_at(Instant::now())
+        }
+
+        /// [`Rapl::read`] as of `now` (tests pass their own clock).
+        fn read_at(&mut self, now: Instant) -> Watts {
             let mut out = Watts::default();
             let mut any = false;
             for zone in &mut self.zones {
@@ -181,16 +185,13 @@ mod linux {
             assert!(rapl.readable());
             assert_eq!(rapl.zones.len(), 3, "core is skipped");
             // The first read has nothing to compare against.
-            assert_eq!(rapl.read(), Watts::default());
-            // Pretend a second passed: rewind the timestamps.
-            for z in &mut rapl.zones {
-                let (uj, t) = z.last.unwrap();
-                z.last = Some((uj, t - std::time::Duration::from_secs(1)));
-            }
+            let start = Instant::now();
+            assert_eq!(rapl.read_at(start), Watts::default());
             zone(&root, "intel-rapl:0", "package-0", 41_001_000);
             // The platform counter wrapped.
             zone(&root, "intel-rapl:1", "psys", 59_000_000);
-            let w = rapl.read();
+            // Exactly one second later, however slow the machine is.
+            let w = rapl.read_at(start + std::time::Duration::from_secs(1));
             let near = |a: Option<f32>, b: f32| (a.unwrap() - b).abs() < 1.0;
             assert!(near(w.package, 41.0), "{w:?}");
             assert!(near(w.psys, 59.0), "{w:?}");
