@@ -85,13 +85,10 @@ fn cpu(ui: &mut egui::Ui, s: &Snapshot, samples: &[Snapshot]) {
             ui,
             "cpu-stats",
             &[
-                (mhz(s.cpu_mhz as f32), "Frequency"),
+                (ghz(s.cpu_mhz as f32), "Frequency"),
                 (celsius(s.cpu_temp_c), "Temperature"),
-                (
-                    s.cpu_power_w
-                        .map_or("—".to_owned(), |w| format!("{w:.1} W")),
-                    "Power",
-                ),
+                (watts(s.cpu_power_w), "Power"),
+                (watts(s.system_power_w), "PC power (est.)"),
             ],
         );
     });
@@ -131,10 +128,11 @@ fn gpu(ui: &mut egui::Ui, s: &Snapshot, samples: &[Snapshot], gl_name: Option<&s
                 (
                     g.mhz
                         .filter(|m| *m > 0)
-                        .map_or("—".to_owned(), |m| mhz(m as f32)),
+                        .map_or("—".to_owned(), |m| ghz(m as f32)),
                     "Frequency",
                 ),
                 (celsius(g.temp_c), "Temperature"),
+                (watts(g.power_w), "Power"),
                 (vram, "Video memory"),
             ],
         );
@@ -386,12 +384,18 @@ fn number(v: f32) -> String {
     }
 }
 
-fn mhz(mhz: f32) -> String {
+fn ghz(mhz: f32) -> String {
     if mhz <= 0.0 {
         "—".to_owned()
     } else {
-        format!("{mhz:.0} MHz")
+        format!("{:.2} GHz", mhz / 1000.0)
     }
+}
+
+/// Watts, or a dash when the power counters aren't readable (Settings →
+/// Power readings turns them on).
+fn watts(w: Option<f32>) -> String {
+    w.map_or("—".to_owned(), |w| format!("{w:.0} W"))
 }
 
 fn celsius(c: Option<f32>) -> String {

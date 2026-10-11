@@ -32,6 +32,10 @@ pub struct Snapshot {
     pub cpu_mhz: u64,
     /// Package power. Needs read access to RAPL counters on Linux.
     pub cpu_power_w: Option<f32>,
+    /// The whole computer's power: the platform counter where there is one,
+    /// else CPU package + memory + discrete GPU. An estimate either way (no
+    /// fans, drives or PSU losses).
+    pub system_power_w: Option<f32>,
     pub gpu: Gpu,
     pub mem_used_pct: f32,
     pub mem_used_bytes: u64,
@@ -102,12 +106,24 @@ impl Sensors {
         self.disks.refresh(true);
         self.networks.refresh(true);
 
+        let watts = self.power.read();
         let total = self.system.total_memory();
         let used = self.system.used_memory();
         let mut gpu = self.gpu.read();
         if gpu.temp_c.is_none() {
             gpu.temp_c = self.find_temp(GPU_LABELS);
         }
+        // A discrete GPU reports its own power; Intel's integrated one is
+        // the RAPL uncore domain, already inside the package figure.
+        let discrete_w = gpu.power_w;
+        if gpu.power_w.is_none() {
+            gpu.power_w = watts.uncore;
+        }
+        let system_power_w = watts.psys.or_else(|| {
+            watts
+                .package
+                .map(|p| p + watts.dram.unwrap_or(0.0) + discrete_w.unwrap_or(0.0))
+        });
 
         let (read, written) = self
             .real_disks()
@@ -138,7 +154,8 @@ impl Sensors {
                 .map(|c| c.frequency())
                 .max()
                 .unwrap_or(0),
-            cpu_power_w: self.power.read(),
+            cpu_power_w: watts.package,
+            system_power_w,
             gpu,
             mem_used_pct: if total == 0 {
                 0.0
@@ -202,6 +219,12 @@ impl Sensors {
                 }
             })
         })
+    }
+
+    /// Whether CPU power counters can be read (on Linux this needs
+    /// OpenCreative's power rule).
+    pub fn power_readable(&self) -> bool {
+        self.power.readable()
     }
 
     /// Every temperature sensor, for diagnostics.

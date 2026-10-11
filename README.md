@@ -45,6 +45,12 @@ a USB capture of DeepCreative (see [docs/protocol](docs/protocol/lm-series.md)).
   temperature, load, frequency, power, RAM), like the vendor app's digital
   mode, in a choice of skins: **Lines** (interlocking lines over a tile grid)
   and **HUD** (neon frames with live network and usage charts)
+- Power readings: CPU package, GPU (NVIDIA, AMD, Intel integrated) and an
+  estimate of the whole PC (`system_power`: the platform counter where the
+  CPU has one, else CPU + memory + discrete GPU). On Linux, CPU power needs
+  **Settings → Power readings** (or `packaging/linux/61-opencreative-power.rules`),
+  which makes the energy counters readable by every user: a known side
+  channel (CVE-2020-8694), so it's off by default
 - Gauges screen: CPU temperature and load gauges, GPU temperature, RAM, clock
 - Images (PNG, JPEG, WebP, BMP) and animated GIFs, with cover / contain / stretch fit
 - Solid colors, brightness 0-100, screen on/off

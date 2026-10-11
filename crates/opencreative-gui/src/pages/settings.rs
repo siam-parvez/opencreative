@@ -93,6 +93,44 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     });
 
     if SERVICE_SUPPORTED {
+        group(ui, "Power readings", |ui| {
+            let installed = service::power_rule_installed();
+            let readable = app.history.power_readable();
+            let status = match (installed, readable) {
+                (true, true) => " On.",
+                (true, false) => {
+                    " The rule is installed but this computer has no readable counters."
+                }
+                (false, _) => "",
+            };
+            setting_row(
+                ui,
+                "CPU and PC power",
+                &format!(
+                    "Lets OpenCreative read the CPU's energy counters, for CPU power and an \
+                     estimate of the whole PC's power. Any program on this computer can then \
+                     read them too, which is a known side channel (CVE-2020-8694), so leave \
+                     this off on shared computers. Asks for your password.{status}"
+                ),
+                |ui| {
+                    let mut on = installed;
+                    let busy = app.task.is_some();
+                    let changed = ui.add_enabled_ui(!busy, |ui| toggle(ui, &mut on)).inner;
+                    if changed.changed() {
+                        if on {
+                            app.run_task(&ctx, "Allowing power readings", || {
+                                service::set_power_rule(true)
+                            });
+                        } else {
+                            app.run_task(&ctx, "Turning off power readings", || {
+                                service::set_power_rule(false)
+                            });
+                        }
+                    }
+                },
+            );
+        });
+
         group(ui, "App menu", |ui| {
             setting_row(
                 ui,

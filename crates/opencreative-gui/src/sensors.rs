@@ -79,6 +79,11 @@ impl SensorHistory {
     }
 
     /// The most recent reading, if one has been taken.
+    /// Whether CPU power counters can be read.
+    pub fn power_readable(&self) -> bool {
+        self.sensors.power_readable()
+    }
+
     pub fn latest(&self) -> Option<&Snapshot> {
         self.samples.back()
     }

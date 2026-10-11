@@ -1,0 +1,7 @@
+# OpenCreative (optional): let users read the CPU energy counters, so the
+# cooler screen and dashboard can show CPU and PC power.
+# Readable counters allow a power side channel (CVE-2020-8694); install this
+# only on a computer whose users you trust.
+# Install: sudo cp 61-opencreative-power.rules /etc/udev/rules.d/ && sudo udevadm control --reload && sudo udevadm trigger --subsystem-match=powercap --action=add
+
+SUBSYSTEM=="powercap", KERNEL=="intel-rapl:*", ACTION=="add", RUN+="/bin/chmod 0444 /sys%p/energy_uj"
