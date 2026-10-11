@@ -67,6 +67,8 @@ jobs:
           # Runners have no FUSE; run appimagetool from its extracted files.
           APPIMAGE_EXTRACT_AND_RUN: "1"
         run: |
+          # appimagetool validates the desktop entry with this.
+          sudo apt-get install -y --no-install-recommends desktop-file-utils
           mkdir -p tools
           curl -sSfL -o tools/appimagetool \
             "https://github.com/AppImage/appimagetool/releases/download/1.9.0/appimagetool-${{ matrix.arch }}.AppImage"
