@@ -142,6 +142,12 @@ mod service {
     pub fn remove_desktop_entry() -> Result<()> {
         enable()
     }
+    pub fn power_rule_installed() -> bool {
+        false
+    }
+    pub fn set_power_rule(_on: bool) -> Result<()> {
+        enable()
+    }
 }
 
 pub const SERVICE_SUPPORTED: bool = cfg!(target_os = "linux");
