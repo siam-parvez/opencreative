@@ -18,6 +18,20 @@ static DISPLAY: LazyLock<FontRef<'static>> = LazyLock::new(|| {
     font.set_variation(b"wght", 600.0);
     font
 });
+// The same Orbitron at a regular weight, for small labels.
+static LABEL: LazyLock<FontRef<'static>> = LazyLock::new(|| {
+    let mut font = FontRef::try_from_slice(include_bytes!("../../../assets/fonts/Orbitron.ttf"))
+        .expect("bundled font is valid");
+    font.set_variation(b"wght", 420.0);
+    font
+});
+// Orbitron at a medium weight, for numbers on lighter skins.
+static MEDIUM: LazyLock<FontRef<'static>> = LazyLock::new(|| {
+    let mut font = FontRef::try_from_slice(include_bytes!("../../../assets/fonts/Orbitron.ttf"))
+        .expect("bundled font is valid");
+    font.set_variation(b"wght", 500.0);
+    font
+});
 static SEMIBOLD: LazyLock<FontRef<'static>> = LazyLock::new(|| {
     FontRef::try_from_slice(include_bytes!(
         "../../../assets/fonts/Rajdhani-SemiBold.ttf"
@@ -31,6 +45,10 @@ pub enum Weight {
     SemiBold,
     /// Squared geometric numerals for large readings.
     Display,
+    /// The display face at a medium weight, for numbers on lighter skins.
+    Medium,
+    /// The display face at a regular weight, for small labels.
+    Label,
 }
 
 #[derive(Clone, Copy)]
@@ -45,6 +63,8 @@ fn face(weight: Weight) -> &'static FontRef<'static> {
         Weight::Bold => &BOLD,
         Weight::SemiBold => &SEMIBOLD,
         Weight::Display => &DISPLAY,
+        Weight::Medium => &MEDIUM,
+        Weight::Label => &LABEL,
     }
 }
 

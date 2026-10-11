@@ -19,11 +19,14 @@ use crate::text::{self, Align, Weight};
 const DESIGN_W: f32 = 320.0;
 const DESIGN_H: f32 = 240.0;
 
-/// Tile grid: square tiles on black, brightest near the top center.
-const TILE: f32 = 7.0;
-const TILE_PITCH: f32 = 8.0;
+/// Tile grid: 8 px square tiles with 2 px black gaps (at 320x240).
+const TILE: f32 = 8.0;
+const TILE_PITCH: f32 = 10.0;
 /// Exact RGB565 grays, darkest to brightest, so flat areas never dither.
-const TILE_GRAYS: [u8; 4] = [8, 16, 24, 32];
+const TILE_GRAYS: [u8; 4] = [0, 8, 16, 24];
+/// The darkest point of the grid, as fractions of the width and height:
+/// just left of center, behind the large reading.
+const SHADE_CENTER: (f32, f32) = (0.45, 0.52);
 
 const LINE: [u8; 3] = [0xe0, 0xe4, 0xe8];
 const FAINT_LINE: [u8; 3] = [0x50, 0x54, 0x58];
@@ -126,23 +129,48 @@ pub(super) fn render(snap: &Snapshot, layout: &Layout, width: u32, height: u32) 
     pm
 }
 
-/// Dark square tiles on black, lit from a soft spot near the top center.
+/// Dark square tiles on black, brightest at the edges and fading to black
+/// behind the large reading. Each tile is one flat gray; the in-between
+/// shades come from an ordered dither across tiles, so the fade looks smooth
+/// without any tile dithering on the panel.
 fn tiles(pm: &mut Pixmap) {
+    const BAYER: [[f32; 4]; 4] = [
+        [0.0, 8.0, 2.0, 10.0],
+        [12.0, 4.0, 14.0, 6.0],
+        [3.0, 11.0, 1.0, 9.0],
+        [15.0, 7.0, 13.0, 5.0],
+    ];
     pm.fill(rgb([0, 0, 0]));
     let (w, h) = (pm.width() as f32, pm.height() as f32);
-    let (hx, hy) = (w * 0.5, h * 0.3);
-    let reach = (w * w + h * h).sqrt() * 0.6;
-    let mut y = (h % TILE_PITCH) / 2.0;
-    while y + TILE <= h {
-        let mut x = (w % TILE_PITCH) / 2.0;
-        while x + TILE <= w {
-            let d = ((x - hx).powi(2) + (y - hy).powi(2)).sqrt() / reach;
-            let level = ((1.0 - d.min(1.0)) * TILE_GRAYS.len() as f32) as usize;
-            let gray = TILE_GRAYS[level.min(TILE_GRAYS.len() - 1)];
-            fill_rect(pm, x, y, TILE, TILE, [gray, gray, gray]);
-            x += TILE_PITCH;
+    let scale = (w.max(h) / DESIGN_W).min(w.min(h) / DESIGN_H);
+    let (tile, pitch) = (TILE * scale, TILE_PITCH * scale);
+    let (cx, cy) = (w * SHADE_CENTER.0, h * SHADE_CENTER.1);
+    let top = TILE_GRAYS.len() as f32 - 1.0;
+    // Start half a gap in, so the grid sits evenly in the frame.
+    let x0 = ((w % pitch) - (pitch - tile)) / 2.0;
+    let y0 = ((h % pitch) - (pitch - tile)) / 2.0;
+    let mut row = 0;
+    let mut y = y0;
+    while y < h {
+        let mut col = 0;
+        let mut x = x0;
+        while x < w {
+            // Elliptical distance from the dark spot, 0 there and 1 at the edges.
+            let dx = (x + tile / 2.0 - cx) / (w / 2.0);
+            let dy = (y + tile / 2.0 - cy) / (h / 2.0);
+            let d = (dx * dx + dy * dy).sqrt().min(1.0);
+            let level = d.powf(1.3) * top;
+            let threshold = (BAYER[row % 4][col % 4] + 0.5) / 16.0;
+            let index = (level.floor() + f32::from(level.fract() > threshold)).min(top) as usize;
+            let gray = TILE_GRAYS[index];
+            if gray > 0 {
+                fill_rect(pm, x, y, tile, tile, [gray, gray, gray]);
+            }
+            x += pitch;
+            col += 1;
         }
-        y += TILE_PITCH;
+        y += pitch;
+        row += 1;
     }
 }
 
@@ -342,10 +370,10 @@ fn reading(
     let label_size = if matches!(size, Size::Large) {
         12.0
     } else {
-        11.0
+        11.5
     } * scale;
     let ly = top + h * label_at;
-    let icon = label_size * 1.05;
+    let icon = label_size * 1.3;
     metric_icon(pm, metric, x + icon / 2.0 + scale, ly, icon);
     text::draw(
         pm,
@@ -353,7 +381,7 @@ fn reading(
         x + icon + 6.0 * scale,
         ly,
         label_size,
-        Weight::SemiBold,
+        Weight::Label,
         Align::Left,
         LABEL,
     );
