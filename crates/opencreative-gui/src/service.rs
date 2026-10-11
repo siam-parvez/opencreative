@@ -37,7 +37,8 @@ const POWER_RULE: Rule = Rule {
     text: include_str!("../../../packaging/linux/61-opencreative-power.rules"),
     path: "/etc/udev/rules.d/61-opencreative-power.rules",
     packaged: "/usr/lib/udev/rules.d/61-opencreative-power.rules",
-    trigger: "udevadm trigger --subsystem-match=powercap --action=add",
+    // Settle, so the counters are readable when the switch flips.
+    trigger: "udevadm trigger --subsystem-match=powercap --action=add && udevadm settle",
 };
 
 const DESKTOP_TEMPLATE: &str = include_str!("../../../packaging/linux/opencreative.desktop");
@@ -333,6 +334,6 @@ mod tests {
         assert!(script.contains(USB_RULE.path));
         let power = POWER_RULE.script();
         assert!(power.contains("chmod 0444 /sys%p/energy_uj"));
-        assert!(power.ends_with("--subsystem-match=powercap --action=add"));
+        assert!(power.ends_with("--subsystem-match=powercap --action=add && udevadm settle"));
     }
 }
