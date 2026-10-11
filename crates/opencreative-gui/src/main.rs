@@ -191,7 +191,6 @@ pub struct Preview {
     player: Option<Player>,
     /// What `player` was built from; rebuilt when any of it changes.
     key: Option<(SceneConfig, u16, bool)>,
-    pub accurate: bool,
     pub texture: Option<egui::TextureHandle>,
     pub size: (u32, u32),
     next_frame: Instant,
@@ -202,6 +201,22 @@ struct Toast {
     text: String,
     error: bool,
     since: Instant,
+}
+
+/// Crisp when enlarged (each panel pixel stays a sharp square), smooth when
+/// shrunk into thumbnails.
+pub const PIXEL_TEXTURE: egui::TextureOptions = egui::TextureOptions {
+    magnification: egui::TextureFilter::Nearest,
+    minification: egui::TextureFilter::Linear,
+    wrap_mode: egui::TextureWrapMode::ClampToEdge,
+    mipmap_mode: None,
+};
+
+/// Converts a rendered frame to the panel's RGB565 colors and back, so the
+/// app shows exactly what the LCD can display.
+pub fn panel_colors(rgba: &[u8], width: u32) -> Vec<u8> {
+    let wire = pixel::rgba_to_rgb565_le(rgba, width as usize);
+    pixel::rgb565_le_to_rgba(&wire)
 }
 
 /// Saves a screenshot of one page and exits (`OPENCREATIVE_SCREENSHOT`).
@@ -223,6 +238,7 @@ pub struct App {
     synced: bool,
     pub device: Option<String>,
     pub screen_on: bool,
+    pub zen: bool,
     pub applied: Config,
     pub brightness: u8,
     /// The last choice in each mode, so switching modes restores it.
@@ -238,7 +254,7 @@ pub struct App {
     pub picking_file: Option<Receiver<Option<PathBuf>>>,
     pub task: Option<Task>,
     toast: Option<Toast>,
-    pub appearance: Appearance,
+    pub prefs: prefs::Prefs,
     logo: Option<egui::TextureHandle>,
     screenshot: Option<ScreenshotJob>,
     started: Instant,
@@ -247,7 +263,12 @@ pub struct App {
 impl App {
     fn new(cc: &eframe::CreationContext<'_>) -> Self {
         theme::install(&cc.egui_ctx);
-        let mut appearance = prefs::load().appearance;
+        let mut prefs = prefs::load();
+        // For screenshots: show the integration without saving the choice.
+        if std::env::var_os("OPENCREATIVE_CLAUDE").is_some() {
+            prefs.claude_usage = true;
+        }
+        let mut appearance = prefs.appearance;
         if let Ok(theme) = std::env::var("OPENCREATIVE_THEME") {
             appearance = match theme.as_str() {
                 "dark" => Appearance::Dark,
@@ -276,6 +297,7 @@ impl App {
             synced: false,
             device: None,
             screen_on: true,
+            zen: false,
             brightness: 100,
             digital_scene: SceneConfig::default(),
             media_scene: default_media_scene(),
@@ -283,7 +305,6 @@ impl App {
             preview: Preview {
                 player: None,
                 key: None,
-                accurate: true,
                 texture: None,
                 size: (0, 0),
                 next_frame: Instant::now(),
@@ -298,10 +319,32 @@ impl App {
             picking_file: None,
             task: None,
             toast: None,
-            appearance,
+            prefs: prefs::Prefs {
+                appearance,
+                ..prefs
+            },
             logo: None,
             screenshot,
             started: Instant::now(),
+        }
+    }
+
+    /// On first launch, start with the computer: enable the background
+    /// service (where supported) so the cooler screen runs from login.
+    fn first_run(&mut self) {
+        if self.prefs.first_run_done || self.screenshot.is_some() {
+            return;
+        }
+        self.prefs.first_run_done = true;
+        if SERVICE_SUPPORTED && !service::query().enabled {
+            self.enable_service();
+        }
+        self.save_prefs();
+    }
+
+    pub fn save_prefs(&mut self) {
+        if let Err(e) = prefs::save(&self.prefs) {
+            self.fail(format!("saving preferences: {e}"));
         }
     }
 
@@ -334,6 +377,7 @@ impl App {
                 self.synced = true;
                 self.device = status.device;
                 self.screen_on = status.screen_on;
+                self.zen = status.zen;
                 self.applied = status.config;
             }
             Ok(other) => self.fail(format!("unexpected daemon response: {other:?}")),
@@ -451,6 +495,13 @@ impl App {
         }
     }
 
+    pub fn set_zen(&mut self, on: bool) {
+        if self.send(Request::SetZen { on }) {
+            self.zen = on;
+        }
+    }
+
+    #[allow(dead_code)] // The app offers Zen mode; the CLI keeps `screen off`.
     pub fn set_screen(&mut self, on: bool) {
         if self.send(Request::SetScreen { on }) {
             self.screen_on = on;
@@ -608,18 +659,19 @@ impl App {
     /// Re-renders the preview when the scene changes or a frame is due.
     fn update_preview(&mut self, ctx: &egui::Context) {
         let p = &mut self.preview;
-        let key = (
-            self.applied.scene.clone(),
-            self.applied.rotation,
-            p.accurate,
-        );
+        let key = (self.applied.scene.clone(), self.applied.rotation, self.zen);
         let rotation = Rotation::from_degrees(self.applied.rotation).unwrap_or_default();
         let spec = &opencreative_device::SUPPORTED[0];
         // Upright, as it looks on the mounted pump.
         p.size = rotation.logical_size(spec.width, spec.height);
 
         if p.key.as_ref() != Some(&key) {
-            p.player = match key.0.to_scene() {
+            let scene = if key.2 {
+                Ok(opencreative_core::Scene::Zen)
+            } else {
+                key.0.to_scene()
+            };
+            p.player = match scene {
                 Ok(scene) => {
                     p.error = None;
                     Some(Player::new(scene, Rotation::R0))
@@ -639,23 +691,16 @@ impl App {
         {
             match player.next(p.size.0, p.size.1) {
                 Ok(out) => {
-                    let mut rgba = out.frame.data().to_vec();
-                    if p.accurate {
-                        let wire = pixel::rgba_to_rgb565_le(&rgba, p.size.0 as usize);
-                        rgba = pixel::rgb565_le_to_rgba(&wire);
-                    }
+                    // Exactly what the panel shows: its 16-bit color.
+                    let rgba = panel_colors(out.frame.data(), p.size.0);
                     let image = egui::ColorImage::from_rgba_unmultiplied(
                         [p.size.0 as usize, p.size.1 as usize],
                         &rgba,
                     );
                     match &mut p.texture {
-                        Some(texture) => texture.set(image, egui::TextureOptions::LINEAR),
+                        Some(texture) => texture.set(image, PIXEL_TEXTURE),
                         None => {
-                            p.texture = Some(ctx.load_texture(
-                                "preview",
-                                image,
-                                egui::TextureOptions::LINEAR,
-                            ));
+                            p.texture = Some(ctx.load_texture("preview", image, PIXEL_TEXTURE));
                         }
                     }
                     p.next_frame = now + out.hold.unwrap_or(Duration::from_secs(3600));
@@ -734,6 +779,7 @@ impl App {
             (Link::Connecting | Link::WaitingForService(_), _) => ("Connecting…", p.faint),
             (_, None) => ("No cooler connected", p.faint),
             (_, Some(_)) if !self.screen_on => ("Screen off", p.faint),
+            (_, Some(_)) if self.zen => ("Zen mode", p.accent),
             (Link::External, Some(_)) => ("Running in background", p.good),
             (Link::Embedded, Some(_)) => ("Running in this window", p.warn),
         };
@@ -853,6 +899,7 @@ fn default_media_scene() -> SceneConfig {
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        self.first_run();
         self.poll();
         self.poll_background();
         self.handle_dropped_files(&ctx);

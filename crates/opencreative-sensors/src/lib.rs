@@ -4,6 +4,7 @@
 //! plus vendor sources where `sysinfo` has nothing (GPU details, CPU power).
 //! Anything unavailable is reported as `None` rather than guessed.
 
+mod claude;
 mod gpu;
 mod metric;
 mod power;
@@ -15,6 +16,7 @@ use sysinfo::{
     System,
 };
 
+pub use claude::{ClaudeUsage, Window as ClaudeWindow};
 pub use gpu::Gpu;
 pub use metric::{Metric, Reading};
 
@@ -36,6 +38,8 @@ pub struct Snapshot {
     pub disk_write_bps: f64,
     pub net_rx_bps: f64,
     pub net_tx_bps: f64,
+    /// Claude plan usage from OpenCUT, when it is running.
+    pub claude: Option<ClaudeUsage>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -145,6 +149,7 @@ impl Sensors {
             disk_write_bps: written as f64 / elapsed,
             net_rx_bps: rx as f64 / elapsed,
             net_tx_bps: tx as f64 / elapsed,
+            claude: claude::read(),
         }
     }
 

@@ -31,6 +31,10 @@ impl Appearance {
 #[serde(default)]
 pub struct Prefs {
     pub appearance: Appearance,
+    /// Show Claude usage from OpenCUT (off unless the user turns it on).
+    pub claude_usage: bool,
+    /// Whether first-launch setup (starting with the computer) has run.
+    pub first_run_done: bool,
 }
 
 fn path() -> Option<PathBuf> {
@@ -62,9 +66,11 @@ mod tests {
     fn round_trips_through_toml() {
         let prefs = Prefs {
             appearance: Appearance::Dark,
+            claude_usage: true,
+            first_run_done: true,
         };
         let text = toml::to_string_pretty(&prefs).unwrap();
-        assert_eq!(text.trim(), "appearance = \"dark\"");
+        assert!(text.contains("appearance = \"dark\""));
         assert_eq!(toml::from_str::<Prefs>(&text).unwrap(), prefs);
         assert_eq!(toml::from_str::<Prefs>("").unwrap(), Prefs::default());
     }

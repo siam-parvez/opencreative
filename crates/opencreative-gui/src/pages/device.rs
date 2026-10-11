@@ -13,9 +13,9 @@ use crate::theme::{self, Palette};
 use crate::widgets::{section, segmented, toggle};
 use crate::{App, Page, is_digital};
 
-const CONTROLS_WIDTH: f32 = 340.0;
+const CONTROLS_WIDTH: f32 = 300.0;
 /// Upper bound on how much the 320x240 preview is enlarged.
-const MAX_PREVIEW_SCALE: f32 = 1.6;
+const MAX_PREVIEW_ZOOM: f32 = 2.0;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Mode {
@@ -47,6 +47,13 @@ const PRESETS: [(&str, Metric, [Metric; 2]); 3] = [
         [Metric::GpuLoad, Metric::RamUsage],
     ),
 ];
+
+/// Offered when the Claude integration is on.
+const CLAUDE_PRESET: (&str, Metric, [Metric; 2]) = (
+    "Claude usage",
+    Metric::ClaudeSession,
+    [Metric::ClaudeWeekly, Metric::CpuTemp],
+);
 
 const SWATCHES: [[u8; 3]; 8] = [
     [0x0d, 0x9b, 0x94],
@@ -185,9 +192,9 @@ fn display_controls(app: &mut App, ui: &mut egui::Ui, mode: Mode) {
             "Turns the screen off. Your layout and brightness are kept for when you turn it back on.",
         );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let mut zen = !app.screen_on;
+            let mut zen = app.zen;
             if toggle(ui, &mut zen).changed() {
-                app.set_screen(!zen);
+                app.set_zen(zen);
             }
         });
     });
@@ -246,16 +253,20 @@ fn preview(app: &mut App, ui: &mut egui::Ui) {
     ui.add_space(6.0);
 
     let (w, h) = app.preview.size;
-    let pad = 14.0;
-    let fit = (ui.available_width() - 2.0 * pad) / w.max(1) as f32;
-    let scale = fit.min(MAX_PREVIEW_SCALE);
-    let screen = vec2(w as f32, h as f32) * scale;
+    let pad = 10.0;
+    // Whole-number zoom in physical pixels keeps every panel pixel sharp.
+    let ppp = ui.ctx().pixels_per_point();
+    let room = (ui.available_width() - 2.0 * pad) * ppp;
+    let zoom = (room / w.max(1) as f32)
+        .floor()
+        .clamp(1.0, MAX_PREVIEW_ZOOM);
+    let screen = vec2(w as f32, h as f32) * zoom / ppp;
     ui.vertical_centered(|ui| {
         let (bezel, _) =
             ui.allocate_exact_size(screen + vec2(2.0 * pad, 2.0 * pad), Sense::hover());
         let painter = ui.painter();
         painter.rect_filled(bezel, 16.0, p.bezel);
-        let inner = bezel.shrink(pad);
+        let inner = snap_to_pixels(bezel.shrink(pad), ppp, screen);
         match &app.preview.texture {
             Some(texture) => {
                 painter.image(
@@ -269,26 +280,19 @@ fn preview(app: &mut App, ui: &mut egui::Ui) {
                 painter.rect_filled(inner, 2.0, Color32::BLACK);
             }
         }
-        if !app.screen_on {
-            painter.rect_filled(inner, 2.0, Color32::from_black_alpha(210));
-            painter.text(
-                inner.center(),
-                egui::Align2::CENTER_CENTER,
-                "Zen mode — screen off",
-                theme::medium(15.0),
-                Color32::from_gray(170),
-            );
-        }
     });
     if let Some(e) = &app.preview.error {
         ui.colored_label(p.bad, e);
     }
-    ui.add_space(6.0);
-    ui.horizontal(|ui| {
-        toggle(ui, &mut app.preview.accurate);
-        ui.label(egui::RichText::new("Show the panel's 16-bit colors").color(p.muted))
-            .on_hover_text("Preview the exact colors the LCD can display (RGB565 with dithering)");
-    });
+}
+
+/// `rect` moved to start on a physical pixel, with exactly `size`.
+fn snap_to_pixels(rect: egui::Rect, ppp: f32, size: egui::Vec2) -> egui::Rect {
+    let min = egui::pos2(
+        (rect.min.x * ppp).round() / ppp,
+        (rect.min.y * ppp).round() / ppp,
+    );
+    egui::Rect::from_min_size(min, size)
 }
 
 fn digital(app: &mut App, ui: &mut egui::Ui) {
@@ -310,6 +314,7 @@ fn digital(app: &mut App, ui: &mut egui::Ui) {
             mut secondary,
             interval_secs,
         } => {
+            let claude = app.prefs.claude_usage;
             section(ui, "Display data");
             let mut changed = false;
             egui::Grid::new("display-data")
@@ -317,16 +322,16 @@ fn digital(app: &mut App, ui: &mut egui::Ui) {
                 .spacing(vec2(16.0, 8.0))
                 .show(ui, |ui| {
                     ui.label(egui::RichText::new("Main reading").color(p.muted));
-                    changed |= metric_combo(ui, "primary", &mut primary);
+                    changed |= metric_combo(ui, "primary", &mut primary, claude);
                     ui.end_row();
                     ui.label(egui::RichText::new("Second reading").color(p.muted));
-                    changed |= metric_combo(ui, "secondary-1", &mut secondary[0]);
+                    changed |= metric_combo(ui, "secondary-1", &mut secondary[0], claude);
                     ui.end_row();
                     ui.label(egui::RichText::new("Third reading").color(p.muted));
                     // The HUD skin charts network traffic in that spot instead.
                     let shown = skin != SkinConfig::Hud;
                     ui.add_enabled_ui(shown, |ui| {
-                        changed |= metric_combo(ui, "secondary-2", &mut secondary[1]);
+                        changed |= metric_combo(ui, "secondary-2", &mut secondary[1], claude);
                     })
                     .response
                     .on_disabled_hover_text("The HUD skin shows network speeds here.");
@@ -335,7 +340,8 @@ fn digital(app: &mut App, ui: &mut egui::Ui) {
             ui.add_space(12.0);
 
             section(ui, "Recommended");
-            for (name, main, others) in PRESETS {
+            let presets = PRESETS.into_iter().chain(claude.then_some(CLAUDE_PRESET));
+            for (name, main, others) in presets {
                 let selected = primary == main && secondary == others;
                 let detail = format!(
                     "{} (main) + {} + {}",
@@ -497,8 +503,12 @@ fn refresh_thumbs(app: &mut App, ctx: &egui::Context, layout: &Layout) {
     let snap = app.history.latest().cloned().unwrap_or_default();
     let history = app.history.samples();
     let clock = chrono::Local::now().format("%H:%M").to_string();
-    let spec = &opencreative_device::SUPPORTED[0];
-    let (w, h) = (spec.width, spec.height);
+    // Render at the thumbnail's exact pixel size so nothing is resampled.
+    let ppp = ctx.pixels_per_point();
+    let (w, h) = (
+        (THUMB_SIZE.x * ppp).round() as u32,
+        (THUMB_SIZE.y * ppp).round() as u32,
+    );
     let images: Vec<_> = Look::ALL
         .into_iter()
         .map(|look| {
@@ -508,34 +518,34 @@ fn refresh_thumbs(app: &mut App, ctx: &egui::Context, layout: &Layout) {
                 }
                 Look::Gauges => opencreative_render::monitor::render(&snap, &clock, w, h),
             };
-            egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], frame.data())
+            let rgba = crate::panel_colors(frame.data(), w);
+            egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &rgba)
         })
         .collect();
     let thumbs = &mut app.skin_thumbs;
     if thumbs.textures.len() == images.len() {
         for (texture, image) in thumbs.textures.iter_mut().zip(images) {
-            texture.set(image, egui::TextureOptions::LINEAR);
+            texture.set(image, crate::PIXEL_TEXTURE);
         }
     } else {
         thumbs.textures = images
             .into_iter()
             .enumerate()
-            .map(|(i, image)| {
-                ctx.load_texture(format!("skin-{i}"), image, egui::TextureOptions::LINEAR)
-            })
+            .map(|(i, image)| ctx.load_texture(format!("skin-{i}"), image, crate::PIXEL_TEXTURE))
             .collect();
     }
     thumbs.rendered = Some(Instant::now());
     ctx.request_repaint_after(THUMB_REFRESH);
 }
 
-fn metric_combo(ui: &mut egui::Ui, id: &str, metric: &mut Metric) -> bool {
+fn metric_combo(ui: &mut egui::Ui, id: &str, metric: &mut Metric, claude: bool) -> bool {
     let before = *metric;
     egui::ComboBox::from_id_salt(id)
         .width(220.0)
         .selected_text(metric.name())
         .show_ui(ui, |ui| {
-            for m in Metric::ALL {
+            // Claude readings only when the integration is turned on.
+            for m in Metric::ALL.into_iter().filter(|m| claude || !m.is_claude()) {
                 ui.selectable_value(metric, m, m.name());
             }
         });

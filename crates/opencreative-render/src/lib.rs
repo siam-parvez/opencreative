@@ -11,6 +11,7 @@ pub mod monitor;
 pub mod panels;
 mod shapes;
 mod text;
+pub mod zen;
 
 pub use tiny_skia::Pixmap;
 

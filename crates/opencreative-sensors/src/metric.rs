@@ -17,6 +17,12 @@ pub enum Metric {
     GpuPower,
     RamUsage,
     RamUsed,
+    /// Claude 5-hour session usage (via OpenCUT).
+    #[serde(rename = "claude_5h")]
+    ClaudeSession,
+    /// Claude weekly usage (via OpenCUT).
+    #[serde(rename = "claude_week")]
+    ClaudeWeekly,
 }
 
 /// A formatted value: `value` is `None` when the sensor isn't available.
@@ -27,7 +33,7 @@ pub struct Reading {
 }
 
 impl Metric {
-    pub const ALL: [Metric; 10] = [
+    pub const ALL: [Metric; 12] = [
         Metric::CpuTemp,
         Metric::CpuLoad,
         Metric::CpuFreq,
@@ -38,7 +44,14 @@ impl Metric {
         Metric::GpuPower,
         Metric::RamUsage,
         Metric::RamUsed,
+        Metric::ClaudeSession,
+        Metric::ClaudeWeekly,
     ];
+
+    /// Whether the reading comes from the optional Claude integration.
+    pub fn is_claude(self) -> bool {
+        matches!(self, Metric::ClaudeSession | Metric::ClaudeWeekly)
+    }
 
     /// Name used in config files and on the command line, e.g. `cpu_temp`.
     pub fn key(self) -> &'static str {
@@ -53,6 +66,8 @@ impl Metric {
             Metric::GpuPower => "gpu_power",
             Metric::RamUsage => "ram_usage",
             Metric::RamUsed => "ram_used",
+            Metric::ClaudeSession => "claude_5h",
+            Metric::ClaudeWeekly => "claude_week",
         }
     }
 
@@ -69,6 +84,8 @@ impl Metric {
             Metric::GpuPower => "GPU POWER",
             Metric::RamUsage => "RAM USAGE",
             Metric::RamUsed => "RAM USED",
+            Metric::ClaudeSession => "CLAUDE 5H",
+            Metric::ClaudeWeekly => "CLAUDE WEEK",
         }
     }
 
@@ -85,6 +102,8 @@ impl Metric {
             Metric::GpuPower => "GPU power",
             Metric::RamUsage => "RAM usage",
             Metric::RamUsed => "RAM used",
+            Metric::ClaudeSession => "Claude 5-hour usage",
+            Metric::ClaudeWeekly => "Claude weekly usage",
         }
     }
 
@@ -105,6 +124,8 @@ impl Metric {
                 (s.mem_total_bytes > 0).then(|| format!("{:.1}", s.mem_used_bytes as f64 / GIB)),
                 "GB",
             ),
+            Metric::ClaudeSession => r(s.claude.and_then(|c| c.session).map(|w| one(w.pct)), "%"),
+            Metric::ClaudeWeekly => r(s.claude.and_then(|c| c.weekly).map(|w| one(w.pct)), "%"),
         }
     }
 }

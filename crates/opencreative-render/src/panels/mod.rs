@@ -12,6 +12,23 @@ use crate::monitor::rgb;
 const CPU: [u8; 3] = [0x58, 0xd0, 0xe8];
 const GPU: [u8; 3] = [0xe8, 0xc0, 0x60];
 const RAM: [u8; 3] = [0x70, 0xd8, 0x90];
+/// Claude's coral.
+const CLAUDE: [u8; 3] = [0xe0, 0x88, 0x60];
+
+/// Moves a point so a `width`-pixel line through it covers whole pixels:
+/// odd widths sit on pixel centers, even widths on pixel edges.
+fn snap(x: f32, width: f32) -> f32 {
+    if (width.round() as i32) % 2 == 1 {
+        x.floor() + 0.5
+    } else {
+        x.round()
+    }
+}
+
+/// A line width in whole pixels, at least one.
+fn crisp_width(width: f32) -> f32 {
+    width.round().max(1.0)
+}
 
 /// Which readings the screen shows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -55,6 +72,7 @@ fn accent(metric: Metric) -> [u8; 3] {
         Metric::CpuTemp | Metric::CpuLoad | Metric::CpuFreq | Metric::CpuPower => CPU,
         Metric::GpuTemp | Metric::GpuLoad | Metric::GpuFreq | Metric::GpuPower => GPU,
         Metric::RamUsage | Metric::RamUsed => RAM,
+        Metric::ClaudeSession | Metric::ClaudeWeekly => CLAUDE,
     }
 }
 
@@ -108,6 +126,8 @@ fn level(snap: &Snapshot, metric: Metric) -> Option<f32> {
         Metric::GpuFreq => snap.gpu.mhz? as f32 / 3000.0,
         Metric::CpuPower => snap.cpu_power_w? / 250.0,
         Metric::GpuPower => snap.gpu.power_w? / 450.0,
+        Metric::ClaudeSession => pct(snap.claude?.session?.pct),
+        Metric::ClaudeWeekly => pct(snap.claude?.weekly?.pct),
     })
 }
 

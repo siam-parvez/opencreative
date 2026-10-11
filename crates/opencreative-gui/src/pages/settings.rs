@@ -3,7 +3,7 @@
 use eframe::egui;
 
 use crate::pages::{header, setting_row};
-use crate::prefs::{self, Appearance, Prefs};
+use crate::prefs::Appearance;
 use crate::theme::{self, Palette};
 use crate::widgets::{chip, segmented, toggle};
 use crate::{App, SERVICE_SUPPORTED, service};
@@ -31,8 +31,11 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         };
         setting_row(
             ui,
-            "Run in the background",
-            &format!("Keep the screen updated and start at login. {status}"),
+            "Start with the computer",
+            &format!(
+                "Runs in the background from login and keeps the cooler's screen updated; \
+                 open this window from the app menu. {status}"
+            ),
             |ui| {
                 let mut on = state.enabled;
                 if toggle(ui, &mut on).changed() {
@@ -113,9 +116,33 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         });
     }
 
+    group(ui, "Integrations", |ui| {
+        let detected = app.history.latest().is_some_and(|s| s.claude.is_some());
+        let status = if detected {
+            "OpenCUT detected."
+        } else {
+            "OpenCUT isn't running (start its ocutd service)."
+        };
+        setting_row(
+            ui,
+            "Claude usage",
+            &format!(
+                "Shows your Claude plan usage (5-hour and weekly) from OpenCUT on the \
+                 dashboard and as readings for the cooler screen. {status}"
+            ),
+            |ui| {
+                let mut on = app.prefs.claude_usage;
+                if toggle(ui, &mut on).changed() {
+                    app.prefs.claude_usage = on;
+                    app.save_prefs();
+                }
+            },
+        );
+    });
+
     group(ui, "Appearance", |ui| {
         setting_row(ui, "Theme", "Light, dark, or follow the desktop.", |ui| {
-            let mut appearance = app.appearance;
+            let mut appearance = app.prefs.appearance;
             if segmented(
                 ui,
                 &mut appearance,
@@ -125,11 +152,9 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                     (Appearance::Dark, "Dark"),
                 ],
             ) {
-                app.appearance = appearance;
+                app.prefs.appearance = appearance;
                 ctx.set_theme(appearance.preference());
-                if let Err(e) = prefs::save(&Prefs { appearance }) {
-                    app.fail(format!("saving preferences: {e}"));
-                }
+                app.save_prefs();
             }
         });
     });

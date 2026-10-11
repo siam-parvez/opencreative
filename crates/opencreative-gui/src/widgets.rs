@@ -100,15 +100,22 @@ pub fn stat(ui: &mut egui::Ui, value: &str, label: &str) {
     let p = Palette::of(ui.ctx());
     ui.vertical(|ui| {
         ui.spacing_mut().item_spacing.y = 0.0;
-        ui.label(
-            egui::RichText::new(value)
-                .font(theme::semibold(17.0))
-                .color(p.accent),
+        // Never wrap: a stat reads as one value and one label.
+        ui.add(
+            egui::Label::new(
+                egui::RichText::new(value)
+                    .font(theme::semibold(17.0))
+                    .color(p.accent),
+            )
+            .extend(),
         );
-        ui.label(
-            egui::RichText::new(label)
-                .font(theme::regular(12.0))
-                .color(p.muted),
+        ui.add(
+            egui::Label::new(
+                egui::RichText::new(label)
+                    .font(theme::regular(12.0))
+                    .color(p.muted),
+            )
+            .extend(),
         );
     });
 }
@@ -202,6 +209,12 @@ pub fn gauge(
 
 /// A usage bar with diagonal hatching on the used part.
 pub fn usage_bar(ui: &mut egui::Ui, fraction: f32, height: f32) {
+    let accent = Palette::of(ui.ctx()).accent;
+    usage_bar_colored(ui, fraction, height, accent);
+}
+
+/// A usage bar in a given color.
+pub fn usage_bar_colored(ui: &mut egui::Ui, fraction: f32, height: f32, color: Color32) {
     let p = Palette::of(ui.ctx());
     let width = ui.available_width();
     let (rect, _) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
@@ -213,10 +226,10 @@ pub fn usage_bar(ui: &mut egui::Ui, fraction: f32, height: f32) {
         vec2(rect.width() * fraction.clamp(0.0, 1.0), rect.height()),
     );
     if used.width() > 0.5 {
-        let fill = p.accent.gamma_multiply(0.55);
+        let fill = color.gamma_multiply(0.55);
         painter.rect_filled(used, radius, fill);
         let hatch = painter.with_clip_rect(used);
-        let stroke = Stroke::new(1.0, p.accent);
+        let stroke = Stroke::new(1.0, color);
         let step = 6.0;
         let mut x = used.left() - used.height();
         while x < used.right() {
@@ -227,7 +240,7 @@ pub fn usage_bar(ui: &mut egui::Ui, fraction: f32, height: f32) {
             x += step;
         }
     }
-    painter.rect_stroke(rect, radius, Stroke::new(1.0, p.accent), StrokeKind::Inside);
+    painter.rect_stroke(rect, radius, Stroke::new(1.0, color), StrokeKind::Inside);
 }
 
 /// Formats bytes per second, e.g. `8.3 KB/s`.

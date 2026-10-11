@@ -81,6 +81,7 @@ opencreative image wallpaper.gif       # still images or looping GIFs
 opencreative image logo.png --fit contain
 opencreative solid '#ff8800'
 opencreative brightness 60
+opencreative zen on                    # calm screen: a dim clock; `zen off` returns
 opencreative screen off                # backlight off; `screen on` restores it
 opencreative --rotate 180 monitor      # upside-down pump
 opencreative sensors                   # check which temperature sensors were found
@@ -101,14 +102,25 @@ Laid out like DeepCool's app, with a light theme (dark available):
   power; memory, storage (read/write and per-disk usage) and network speeds;
   a two-minute history chart.
 - **Devices**: coolers found on USB, with a live thumbnail of each screen.
-- **Cooler screen**: brightness, Zen mode (screen off), rotation, and a live
-  preview. *Digital* mode picks a skin from a gallery of live thumbnails
+- **Cooler screen**: brightness, Zen mode (a calm clock screen), rotation, and
+  a pixel-exact live preview of what the panel shows. *Digital* mode picks a skin from a gallery of live thumbnails
   (Lines, HUD, Gauges) and which readings to show (with recommended
   combinations); *Multimedia* mode shows an image or
   GIF (Browse… or drop a file on the window) or a color. Changes apply
   immediately.
-- **Settings**: run in the background at login, install the USB rule (asks for
-  your password), add OpenCreative to your app menu, and choose the theme.
+- **Settings**: start with the computer (on by default; the background service
+  keeps the screen running from login), install the USB rule (asks for your
+  password), add OpenCreative to your app menu, Claude usage, and the theme.
+
+### Claude usage (optional)
+
+With [OpenCUT](https://github.com/siam-parvez/OpenCUT)'s `ocutd` running,
+turn on **Settings → Integrations → Claude usage** to see your Claude plan's
+5-hour and weekly usage on the dashboard, and to pick them as cooler-screen
+readings (`claude_5h`, `claude_week`, or the "Claude usage" preset).
+OpenCreative only reads OpenCUT's snapshot file
+(`$XDG_RUNTIME_DIR/opencut/usage.json`); it never contacts Anthropic or reads
+credentials. Not affiliated with Anthropic.
 
 The app talks to the daemon; if none is running it starts one inside the
 window, so the screen only keeps updating while the window is open — Settings

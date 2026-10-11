@@ -20,8 +20,8 @@ const MUTED: [u8; 3] = [0x8b, 0x95, 0xa7];
 const ARC_START: f32 = 0.75 * PI;
 const ARC_SWEEP: f32 = 1.5 * PI;
 
-/// Height of the bottom status strip in pixels.
-const STRIP: f32 = 52.0;
+/// Height of the bottom status strip, as a fraction of the screen height.
+const STRIP: f32 = 52.0 / 240.0;
 
 /// Renders the monitor screen at `width` x `height`. Portrait sizes stack the
 /// gauges vertically.
@@ -30,7 +30,7 @@ pub fn render(snap: &Snapshot, clock: &str, width: u32, height: u32) -> Pixmap {
     let (w, h) = (width as f32, height as f32);
     pm.fill(rgb(BG));
 
-    let gauge_area = h - STRIP;
+    let gauge_area = h - h * STRIP;
     let cells = if w >= h {
         [
             (w * 0.25, gauge_area / 2.0, w / 2.0, gauge_area),
@@ -157,15 +157,21 @@ pub(crate) fn arc(
 }
 
 fn status_strip(pm: &mut Pixmap, snap: &Snapshot, clock: &str, w: f32, h: f32) {
-    let top = h - STRIP;
+    // Sizes were designed for a 240 px tall screen; scale with the screen.
+    let s = h / 240.0;
+    let strip = h * STRIP;
+    let top = h - strip;
     let mut paint = Paint::default();
     paint.set_color(rgb(TRACK));
-    if let Some(rect) = Rect::from_xywh(12.0, top, w - 24.0, 1.0) {
+    if let Some(rect) =
+        Rect::from_xywh((12.0 * s).round(), top.round(), (w - 24.0 * s).round(), 1.0)
+    {
         pm.fill_rect(rect, &paint, Transform::identity(), None);
     }
 
-    let cy = top + STRIP / 2.0;
-    let size = 22.0;
+    let cy = top + strip / 2.0;
+    let size = 22.0 * s;
+    let edge = 16.0 * s;
     let (gpu, gpu_color) = match snap.gpu.temp_c {
         Some(t) => (format!("GPU {t:.0}°"), temp_color(t)),
         None => ("GPU --".to_owned(), MUTED),
@@ -174,7 +180,7 @@ fn status_strip(pm: &mut Pixmap, snap: &Snapshot, clock: &str, w: f32, h: f32) {
     text::draw(
         pm,
         &gpu,
-        16.0,
+        edge,
         cy,
         size,
         Weight::SemiBold,
@@ -194,7 +200,7 @@ fn status_strip(pm: &mut Pixmap, snap: &Snapshot, clock: &str, w: f32, h: f32) {
     text::draw(
         pm,
         clock,
-        w - 16.0,
+        w - edge,
         cy,
         size,
         Weight::SemiBold,

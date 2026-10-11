@@ -50,6 +50,11 @@ enum Command {
         #[arg(value_parser = clap::value_parser!(u8).range(0..=100))]
         percent: u8,
     },
+    /// Show a calm screen with a dim clock (Zen mode), or go back.
+    Zen {
+        #[arg(value_enum)]
+        state: OnOff,
+    },
     /// Turn the screen off (backlight off) or back on.
     Screen {
         #[arg(value_enum)]
@@ -196,6 +201,10 @@ fn connect_daemon(disabled: bool) -> Result<Option<ipc::Client>> {
 fn run_direct(command: Command, serial: Option<&str>, rotation: Rotation) -> Result<()> {
     match command {
         Command::Brightness { percent } => Ok(device::open(serial)?.set_brightness(percent)?),
+        Command::Zen { state } => match state {
+            OnOff::On => play(Scene::Zen, serial, rotation),
+            OnOff::Off => bail!("Zen mode runs until interrupted when there is no daemon"),
+        },
         Command::Screen { state } => {
             // Without a daemon there is no remembered level; use the saved one.
             let level = match state {
@@ -252,6 +261,9 @@ fn send_to_daemon(
     }
     requests.push(match command {
         Command::Brightness { percent } => Request::SetBrightness { percent },
+        Command::Zen { state } => Request::SetZen {
+            on: matches!(state, OnOff::On),
+        },
         Command::Screen { state } => Request::SetScreen {
             on: matches!(state, OnOff::On),
         },
@@ -336,6 +348,7 @@ fn status(client: Option<ipc::Client>) -> Result<()> {
                 status.device.as_deref().unwrap_or("not connected")
             );
             println!("Screen: {}", if status.screen_on { "on" } else { "off" });
+            println!("Zen mode: {}", if status.zen { "on" } else { "off" });
             print!("{}", toml::to_string_pretty(&status.config)?);
             Ok(())
         }

@@ -10,14 +10,14 @@ use tiny_skia::{FillRule, Paint, PathBuilder, Pixmap, Stroke, Transform};
 
 use crate::monitor::rgb;
 
-use super::{Layout, accent, chip_icon, fill_rect, level};
+use super::{Layout, accent, chip_icon, crisp_width, fill_rect, level, snap};
 use crate::text::{self, Align, Weight};
 
 const DESIGN_W: f32 = 320.0;
 const DESIGN_H: f32 = 240.0;
 
 /// Tile grid: square tiles on black, brightest near the top center.
-const TILE: f32 = 6.0;
+const TILE: f32 = 7.0;
 const TILE_PITCH: f32 = 8.0;
 /// Exact RGB565 grays, darkest to brightest, so flat areas never dither.
 const TILE_GRAYS: [u8; 4] = [8, 16, 24, 32];
@@ -171,7 +171,14 @@ fn frame(pm: &mut Pixmap, space: Space) {
 /// A thin line through design-space points with rounded corners.
 fn polyline(pm: &mut Pixmap, space: Space, points: &[(f32, f32)], color: [u8; 3]) {
     let radius = 6.0 * space.scale;
-    let pts: Vec<(f32, f32)> = points.iter().map(|&(x, y)| space.point(x, y)).collect();
+    let width = crisp_width(space.scale);
+    let pts: Vec<(f32, f32)> = points
+        .iter()
+        .map(|&(x, y)| {
+            let (x, y) = space.point(x, y);
+            (snap(x, width), snap(y, width))
+        })
+        .collect();
     let mut pb = PathBuilder::new();
     pb.move_to(pts[0].0, pts[0].1);
     for i in 1..pts.len() {
@@ -191,7 +198,7 @@ fn polyline(pm: &mut Pixmap, space: Space, points: &[(f32, f32)], color: [u8; 3]
         paint.set_color(rgb(color));
         paint.anti_alias = true;
         let stroke = Stroke {
-            width: 1.1 * space.scale,
+            width,
             ..Stroke::default()
         };
         pm.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
@@ -208,7 +215,9 @@ fn toward(from: (f32, f32), to: (f32, f32), distance: f32) -> (f32, f32) {
 
 /// A small ring where lines meet.
 fn node(pm: &mut Pixmap, space: Space, x: f32, y: f32) {
+    let width = crisp_width(space.scale);
     let (cx, cy) = space.point(x, y);
+    let (cx, cy) = (snap(cx, width), snap(cy, width));
     let mut pb = PathBuilder::new();
     pb.push_circle(cx, cy, 2.6 * space.scale);
     let Some(path) = pb.finish() else { return };
@@ -226,7 +235,7 @@ fn node(pm: &mut Pixmap, space: Space, x: f32, y: f32) {
     );
     paint.set_color(rgb(LINE));
     let stroke = Stroke {
-        width: 1.1 * space.scale,
+        width,
         ..Stroke::default()
     };
     pm.stroke_path(&path, &paint, &stroke, Transform::identity(), None);

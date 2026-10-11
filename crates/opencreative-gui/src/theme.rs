@@ -147,6 +147,8 @@ pub fn install(ctx: &egui::Context) {
             style.spacing.interact_size.y = 30.0;
             style.spacing.slider_width = 240.0;
             style.spacing.combo_width = 200.0;
+            // An app, not a document: labels shouldn't be text-selectable.
+            style.interaction.selectable_labels = false;
             // A scrollbar with its own gutter, so it never covers card edges.
             style.spacing.scroll = egui::style::ScrollStyle::solid();
         });

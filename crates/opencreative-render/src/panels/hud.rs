@@ -7,7 +7,7 @@ use tiny_skia::{
     Stroke, Transform,
 };
 
-use super::{Layout, accent, chip_icon, fill_rect, level};
+use super::{Layout, accent, chip_icon, crisp_width, fill_rect, level, snap};
 use crate::monitor::rgb;
 use crate::text::{self, Align, Weight};
 
@@ -113,10 +113,16 @@ fn neon(top: f32, bottom: f32) -> Paint<'static> {
     }
 }
 
+/// Strokes a polyline in whole-pixel widths on the pixel grid, so straight
+/// runs stay sharp on the panel.
 fn stroke(pm: &mut Pixmap, points: &[(f32, f32)], close: bool, width: f32, paint: &Paint) {
+    let width = crisp_width(width);
+    let p = |&(x, y): &(f32, f32)| (snap(x, width), snap(y, width));
     let mut pb = PathBuilder::new();
-    pb.move_to(points[0].0, points[0].1);
-    for &(x, y) in &points[1..] {
+    let (x0, y0) = p(&points[0]);
+    pb.move_to(x0, y0);
+    for point in &points[1..] {
+        let (x, y) = p(point);
         pb.line_to(x, y);
     }
     if close {
@@ -152,7 +158,7 @@ fn fill(pm: &mut Pixmap, points: &[(f32, f32)], paint: &Paint) {
 /// The main reading inside layered neon frames.
 fn main_block(pm: &mut Pixmap, snap: &Snapshot, metric: Metric, r: Area) {
     let paint = neon(r.y0, r.y1);
-    let line = (r.h() * 0.009).max(1.3);
+    let line = (r.h() * 0.009).max(1.0);
     let p = |fx: f32, fy: f32| r.at(fx, fy);
 
     // Outer frame: left side, a chamfered top-left corner and a step.

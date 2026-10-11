@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 
 use opencreative_device::{self as device, Display};
 use opencreative_render::media::{self, Fit};
-use opencreative_render::{Pixmap, Rotation, monitor, panels, rotate, solid};
+use opencreative_render::{Pixmap, Rotation, monitor, panels, rotate, solid, zen};
 use opencreative_sensors::Sensors;
 use thiserror::Error;
 
@@ -53,6 +53,8 @@ pub enum Scene {
         fit: Fit,
     },
     Solid([u8; 3]),
+    /// A calm screen with a dim clock (Zen mode).
+    Zen,
 }
 
 impl Scene {
@@ -64,7 +66,7 @@ impl Scene {
 
     /// Whether the scene shows sensor readings.
     fn is_live(&self) -> bool {
-        matches!(self, Self::Monitor { .. } | Self::Panels { .. })
+        matches!(self, Self::Monitor { .. } | Self::Panels { .. } | Self::Zen)
     }
 }
 
@@ -143,6 +145,14 @@ impl Player {
                 Ok(Output {
                     frame: rotate(&frame, self.rotation),
                     hold: Some(*interval),
+                })
+            }
+            Scene::Zen => {
+                let snap = self.sensors.get_or_insert_with(Sensors::new).read();
+                let clock = chrono::Local::now().format("%H:%M").to_string();
+                Ok(Output {
+                    frame: rotate(&zen::render(&snap, &clock, w, h), self.rotation),
+                    hold: Some(Duration::from_secs(1)),
                 })
             }
             Scene::Solid(rgb) => Ok(Output {

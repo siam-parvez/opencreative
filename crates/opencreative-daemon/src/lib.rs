@@ -112,6 +112,7 @@ impl Shared {
                 return Response::Status(Status {
                     device: state.device.clone(),
                     screen_on: state.screen_on,
+                    zen: state.zen,
                     config: config.clone(),
                 });
             }
@@ -138,6 +139,7 @@ impl Shared {
             },
             // Session state, not a setting: the screen is on after a restart.
             Request::SetScreen { on } => Command::SetScreen(on),
+            Request::SetZen { on } => Command::SetZen(on),
             Request::Hello { .. } => return error("hello is handled by the server"),
         };
         save(&self.config_path, &config);

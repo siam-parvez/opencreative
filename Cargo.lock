@@ -2557,6 +2557,7 @@ dependencies = [
 name = "opencreative-sensors"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "nvml-wrapper",
  "serde",
  "serde_json",
