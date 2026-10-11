@@ -79,7 +79,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             .add(
                 egui::Label::new(
                     egui::RichText::new("Devices")
-                        .font(theme::semibold(24.0))
+                        .font(theme::semibold(22.0))
                         .color(p.muted),
                 )
                 .sense(Sense::click()),
@@ -90,16 +90,17 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         }
         ui.label(
             egui::RichText::new("/")
-                .font(theme::semibold(24.0))
+                .font(theme::semibold(22.0))
                 .color(p.faint),
         );
         let name = app
             .device
             .clone()
             .unwrap_or_else(|| opencreative_device::SUPPORTED[0].name.to_owned());
+        let name = app.device_title(&name).to_owned();
         ui.label(
             egui::RichText::new(name)
-                .font(theme::semibold(24.0))
+                .font(theme::semibold(22.0))
                 .color(p.text),
         );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -649,7 +650,7 @@ fn drop_zone(app: &mut App, ui: &mut egui::Ui) {
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.vertical_centered(|ui| {
-                icons::show(ui, Icon::Storage, 26.0, p.accent);
+                icons::show(ui, Icon::Upload, 26.0, p.accent);
                 ui.label(
                     egui::RichText::new("Drop an image or GIF anywhere on this window")
                         .color(p.text),
@@ -675,9 +676,9 @@ fn icon_button(ui: &mut egui::Ui, icon: Icon, tooltip: &str) -> egui::Response {
     let p = Palette::of(ui.ctx());
     let (rect, response) = ui.allocate_exact_size(vec2(30.0, 30.0), Sense::click());
     if response.hovered() {
-        ui.painter().rect_filled(rect, 6.0, p.accent_soft);
+        ui.painter().rect_filled(rect, 6.0, p.raised);
     }
-    icons::paint(ui.painter(), rect.shrink(6.0), icon, p.muted);
+    icons::paint(ui, rect.shrink(7.0), icon, p.muted);
     response
         .on_hover_text(tooltip)
         .on_hover_cursor(egui::CursorIcon::PointingHand)

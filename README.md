@@ -10,6 +10,9 @@ An alternative to DeepCool's Windows-only DeepCreative app.
 > by DeepCool. "DeepCool" and "DeepCreative" are trademarks of their owners.
 
 <p>
+  <img src="docs/screenshots/devices.png" alt="OpenCreative devices page: the cooler pictured with its live screen" width="100%">
+</p>
+<p>
   <img src="docs/screenshots/dashboard.png" alt="OpenCreative dashboard" width="49%">
   <img src="docs/screenshots/device.png" alt="OpenCreative cooler screen settings" width="49%">
 </p>
@@ -202,6 +205,9 @@ New devices implement `Display` in `opencreative-device`; frontends don't change
 
 ## Credits
 
+- Icons: [Lucide](https://lucide.dev) (ISC, `assets/icons/LICENSE-lucide.txt`).
+- Device pictures in `assets/devices/` are DeepCool's product images, used to
+  identify the hardware; they remain DeepCool's property.
 - Protocol captures: [daedlock/deepcool-lm](https://github.com/daedlock/deepcool-lm) (MIT)
 - Fonts: [Rajdhani](https://fonts.google.com/specimen/Rajdhani) by Indian Type Foundry, [Orbitron](https://github.com/theleagueof/orbitron) by The League of Moveable Type, and [IBM Plex Sans](https://github.com/IBM/plex) by IBM (SIL OFL 1.1)
 

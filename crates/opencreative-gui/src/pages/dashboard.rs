@@ -14,7 +14,9 @@ use crate::widgets::{self, bytes, rate, stat};
 /// More disks than this get summarized rather than listed.
 const MAX_DISKS: usize = 3;
 const GAUGE: f32 = 156.0;
-const SPARK_HEIGHT: f32 = 46.0;
+const SPARK_HEIGHT: f32 = 52.0;
+/// The GPU's color, as on the cooler screen.
+const GPU: Color32 = Color32::from_rgb(0xf5, 0xb8, 0x41);
 
 pub fn show(app: &mut App, ui: &mut egui::Ui) {
     header(ui, "Dashboard", Some("Live readings from this computer"));
@@ -45,25 +47,38 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     ui.add_space(56.0);
 }
 
-/// Cards side by side, all as tall as the tallest one. Heights are measured
+/// Cards side by side, all as tall as the tallest one, wrapping onto more
+/// rows when a card would be narrower than `min_width`. Heights are measured
 /// each frame and applied on the next, which settles immediately.
 fn card_row(ui: &mut egui::Ui, id: &str, n: usize, mut add: impl FnMut(usize, &mut egui::Ui)) {
-    let key = egui::Id::new(("card-row-height", id));
-    let target: f32 = ui.ctx().data(|d| d.get_temp(key)).unwrap_or(0.0);
-    let mut tallest = 0.0_f32;
-    ui.columns(n, |cols| {
-        for (i, col) in cols.iter_mut().enumerate() {
-            theme::card(col, |ui| {
-                let top = ui.cursor().min.y;
-                ui.set_min_height(target);
-                add(i, ui);
-                tallest = tallest.max(ui.cursor().min.y - top);
-            });
+    let min_width = if n == 2 { 420.0 } else { 260.0 };
+    let gap = ui.spacing().item_spacing.x;
+    let fit = ((ui.available_width() + gap) / (min_width + gap)).floor() as usize;
+    let per_row = fit.clamp(1, n);
+    let mut first = 0;
+    while first < n {
+        let count = per_row.min(n - first);
+        let key = egui::Id::new(("card-row-height", id, first));
+        let target: f32 = ui.ctx().data(|d| d.get_temp(key)).unwrap_or(0.0);
+        let mut tallest = 0.0_f32;
+        ui.columns(per_row, |cols| {
+            for (i, col) in cols.iter_mut().take(count).enumerate() {
+                theme::card(col, |ui| {
+                    let top = ui.cursor().min.y;
+                    ui.set_min_height(target);
+                    add(first + i, ui);
+                    tallest = tallest.max(ui.cursor().min.y - top);
+                });
+            }
+        });
+        if (tallest - target).abs() > 0.5 {
+            ui.ctx().data_mut(|d| d.insert_temp(key, tallest));
+            ui.ctx().request_repaint();
         }
-    });
-    if (tallest - target).abs() > 0.5 {
-        ui.ctx().data_mut(|d| d.insert_temp(key, tallest));
-        ui.ctx().request_repaint();
+        first += count;
+        if first < n {
+            ui.add_space(gap);
+        }
     }
 }
 
@@ -77,8 +92,8 @@ fn cpu(ui: &mut egui::Ui, s: &Snapshot, samples: &[Snapshot]) {
             s.cpu_load_pct / 100.0,
             &number(s.cpu_load_pct),
             "%",
-            "Load",
-            ("0%", "100%"),
+            "CPU load",
+            Palette::of(ui.ctx()).accent,
         );
         ui.add_space(12.0);
         stat_grid(
@@ -111,7 +126,7 @@ fn gpu(ui: &mut egui::Ui, s: &Snapshot, samples: &[Snapshot], gl_name: Option<&s
             Some(load) => (load / 100.0, number(load), "%"),
             None => (0.0, "—".to_owned(), ""),
         };
-        widgets::gauge(ui, GAUGE, fraction, &value, unit, "Load", ("0%", "100%"));
+        widgets::gauge(ui, GAUGE, fraction, &value, unit, "GPU load", GPU);
         ui.add_space(12.0);
         let vram = match (g.vram_used_bytes, g.vram_total_bytes) {
             (Some(used), Some(total)) => format!(
@@ -166,7 +181,7 @@ fn memory(ui: &mut egui::Ui, s: &Snapshot) {
     ui.horizontal(|ui| {
         ui.label(
             egui::RichText::new(format!("{:.0}", s.mem_used_pct))
-                .font(theme::medium(34.0))
+                .font(theme::numeric(30.0))
                 .color(p.text),
         );
         ui.label(egui::RichText::new("% used").color(p.muted));
@@ -188,7 +203,7 @@ fn memory(ui: &mut egui::Ui, s: &Snapshot) {
 fn storage(ui: &mut egui::Ui, s: &Snapshot) {
     let p = Palette::of(ui.ctx());
     card_title(ui, Icon::Storage, "Storage", None);
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         rate_chip(ui, Icon::Up, &rate(s.disk_read_bps), "read");
         rate_chip(ui, Icon::Down, &rate(s.disk_write_bps), "write");
     });
@@ -230,7 +245,7 @@ fn storage(ui: &mut egui::Ui, s: &Snapshot) {
 fn network(ui: &mut egui::Ui, s: &Snapshot, samples: &[Snapshot]) {
     let p = Palette::of(ui.ctx());
     card_title(ui, Icon::Network, "Network", None);
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         rate_chip(ui, Icon::Up, &rate(s.net_tx_bps), "up");
         rate_chip(ui, Icon::Down, &rate(s.net_rx_bps), "down");
     });
@@ -341,38 +356,60 @@ fn series(samples: &[Snapshot], f: impl Fn(&Snapshot) -> Option<f32>) -> Vec<Opt
     samples.iter().map(f).collect()
 }
 
-/// A small line chart of 0..1 values, newest at the right, with a caption.
+/// A small area chart of 0..1 values, newest at the right, with a caption.
+/// The first series is filled; the others are lines.
 fn sparkline(ui: &mut egui::Ui, lines: &[(Vec<Option<f32>>, Color32)], caption: &str) {
     const SLOTS: usize = 120;
     let p = Palette::of(ui.ctx());
-    ui.add_space(8.0);
+    ui.add_space(10.0);
     let (rect, _) =
         ui.allocate_exact_size(vec2(ui.available_width(), SPARK_HEIGHT), Sense::hover());
     let painter = ui.painter_at(rect);
-    painter.rect_filled(rect, 6.0, p.control);
-    let inner = rect.shrink2(vec2(6.0, 6.0));
-    let dx = inner.width() / (SLOTS - 1) as f32;
-    for (values, color) in lines {
+    // Faint guides at a quarter, half and three quarters.
+    for t in [0.25, 0.5, 0.75] {
+        let y = rect.top() + rect.height() * t;
+        painter.line_segment(
+            [pos2(rect.left(), y), pos2(rect.right(), y)],
+            Stroke::new(1.0, p.border.gamma_multiply(0.6)),
+        );
+    }
+    let dx = rect.width() / (SLOTS - 1) as f32;
+    for (n, (values, color)) in lines.iter().enumerate() {
         let recent = &values[values.len().saturating_sub(SLOTS)..];
         let offset = SLOTS - recent.len();
-        let mut run = Vec::new();
-        let flush = |run: &mut Vec<egui::Pos2>| {
-            if run.len() > 1 {
-                painter.line(std::mem::take(run), Stroke::new(1.5, *color));
+        let points: Vec<Option<egui::Pos2>> = recent
+            .iter()
+            .enumerate()
+            .map(|(i, v)| {
+                v.map(|v| {
+                    pos2(
+                        rect.left() + (offset + i) as f32 * dx,
+                        rect.bottom() - 1.0 - v.clamp(0.0, 1.0) * (rect.height() - 2.0),
+                    )
+                })
+            })
+            .collect();
+        for run in points.split(Option::is_none) {
+            let run: Vec<egui::Pos2> = run.iter().flatten().copied().collect();
+            if run.len() < 2 {
+                continue;
             }
-            run.clear();
-        };
-        for (i, v) in recent.iter().enumerate() {
-            match v {
-                Some(v) => run.push(pos2(
-                    inner.left() + (offset + i) as f32 * dx,
-                    inner.bottom() - v.clamp(0.0, 1.0) * inner.height(),
-                )),
-                None => flush(&mut run),
+            if n == 0 {
+                // Fill under the line, one thin column per sample.
+                let fill = color.gamma_multiply(0.14);
+                for pair in run.windows(2) {
+                    let (a, b) = (pair[0], pair[1]);
+                    painter.add(egui::Shape::convex_polygon(
+                        vec![a, b, pos2(b.x, rect.bottom()), pos2(a.x, rect.bottom())],
+                        fill,
+                        Stroke::NONE,
+                    ));
+                }
             }
+            painter.line(run, Stroke::new(1.5, *color));
         }
-        flush(&mut run);
     }
+    ui.add_space(4.0);
     ui.label(egui::RichText::new(caption).small().color(p.faint));
 }
 

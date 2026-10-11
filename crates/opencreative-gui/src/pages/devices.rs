@@ -1,14 +1,46 @@
-//! Devices: supported coolers found on USB.
+//! Devices: supported coolers found on USB, pictured with their live screen.
 
-use eframe::egui::{self, Color32, Sense, vec2};
+use eframe::egui::{self, Color32, Rect, Sense, pos2, vec2};
 
 use crate::icons::{self, Icon};
 use crate::pages::header;
+use crate::prefs::{Finish, Model};
 use crate::theme::{self, Palette};
-use crate::widgets::chip;
+use crate::widgets::{chip, segmented};
 use crate::{App, Page};
 
-const THUMB: egui::Vec2 = vec2(176.0, 132.0);
+/// A product picture, its aspect ratio, and where the pump's screen sits in
+/// it as fractions of the image. Both finishes of a model share one framing.
+struct Picture {
+    source: egui::ImageSource<'static>,
+    aspect: f32,
+    screen: Rect,
+}
+
+fn picture_of(model: Model, finish: Finish) -> Picture {
+    use egui::include_image as png;
+    let (aspect, screen) = match model {
+        Model::Lm240 => (
+            900.0 / 400.0,
+            Rect::from_min_max(pos2(0.627, 0.455), pos2(0.774, 0.710)),
+        ),
+        Model::Lm360 => (
+            900.0 / 367.0,
+            Rect::from_min_max(pos2(0.679, 0.505), pos2(0.800, 0.738)),
+        ),
+    };
+    let source = match (model, finish) {
+        (Model::Lm240, Finish::Black) => png!("../../../../assets/devices/lm240-black.png"),
+        (Model::Lm240, Finish::White) => png!("../../../../assets/devices/lm240-white.png"),
+        (Model::Lm360, Finish::Black) => png!("../../../../assets/devices/lm360-black.png"),
+        (Model::Lm360, Finish::White) => png!("../../../../assets/devices/lm360-white.png"),
+    };
+    Picture {
+        source,
+        aspect,
+        screen,
+    }
+}
 
 pub fn show(app: &mut App, ui: &mut egui::Ui) {
     let p = Palette::of(ui.ctx());
@@ -20,11 +52,10 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
 
     if app.devices.is_empty() {
         theme::card(ui, |ui| {
-            ui.set_width(ui.available_width());
             ui.vertical_centered(|ui| {
-                ui.add_space(18.0);
-                icons::show(ui, Icon::Cooler, 48.0, p.faint);
-                ui.add_space(8.0);
+                ui.add_space(12.0);
+                picture(app, ui, 420.0, false);
+                ui.add_space(12.0);
                 ui.label(
                     egui::RichText::new("No supported cooler found")
                         .font(theme::semibold(17.0))
@@ -37,13 +68,14 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                     )
                     .color(p.muted),
                 );
-                ui.add_space(8.0);
+                ui.add_space(10.0);
                 if ui.button("Open Settings").clicked() {
                     app.page = Page::Settings;
                 }
-                ui.add_space(18.0);
+                ui.add_space(12.0);
             });
         });
+        ui.add_space(14.0);
     }
 
     let rows: Vec<_> = app
@@ -54,19 +86,28 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     for (name, width, height, serial) in rows {
         let connected = app.device.as_deref() == Some(name);
         theme::card(ui, |ui| {
-            ui.set_width(ui.available_width());
+            let picture_w = (ui.available_width() * 0.6).clamp(360.0, 640.0);
             ui.horizontal(|ui| {
-                thumbnail(app, ui, connected);
-                ui.add_space(12.0);
+                picture(app, ui, picture_w, connected);
+                ui.add_space(24.0);
                 ui.vertical(|ui| {
+                    ui.add_space(18.0);
+                    let (text, color) = if connected {
+                        ("Connected", p.good)
+                    } else {
+                        ("Found, not in use", p.faint)
+                    };
+                    chip(ui, text, color);
                     ui.add_space(6.0);
+                    let title = app.device_title(name);
                     ui.label(
-                        egui::RichText::new(name)
-                            .font(theme::semibold(18.0))
+                        egui::RichText::new(title)
+                            .font(theme::semibold(22.0))
                             .color(p.text),
                     );
                     ui.label(
-                        egui::RichText::new(format!("{width} × {height} LCD · USB")).color(p.muted),
+                        egui::RichText::new(format!("{width} × {height} IPS screen · USB"))
+                            .color(p.muted),
                     );
                     if let Some(serial) = &serial {
                         ui.label(
@@ -75,31 +116,56 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                                 .color(p.faint),
                         );
                     }
-                    ui.add_space(6.0);
-                    let (text, color) = if connected {
-                        ("Connected", p.good)
-                    } else {
-                        ("Found, not in use", p.faint)
-                    };
-                    chip(ui, text, color);
-                    ui.add_space(8.0);
-                    if ui.button("Customize screen").clicked() {
+                    ui.add_space(14.0);
+                    ui.label(
+                        egui::RichText::new("Model and finish (for the picture)")
+                            .small()
+                            .color(p.muted),
+                    );
+                    ui.horizontal(|ui| {
+                        let mut model = app.prefs.model;
+                        let mut finish = app.prefs.finish;
+                        let changed = segmented(
+                            ui,
+                            &mut model,
+                            &[(Model::Lm240, "LM240"), (Model::Lm360, "LM360")],
+                        ) | segmented(
+                            ui,
+                            &mut finish,
+                            &[(Finish::Black, "Black"), (Finish::White, "White")],
+                        );
+                        if changed {
+                            app.prefs.model = model;
+                            app.prefs.finish = finish;
+                            app.save_prefs();
+                        }
+                    });
+                    ui.add_space(14.0);
+                    let button = egui::Button::new(
+                        egui::RichText::new("Customize screen").color(Color32::BLACK),
+                    )
+                    .fill(p.accent)
+                    .stroke(egui::Stroke::NONE)
+                    .corner_radius(8);
+                    if ui.add(button).clicked() {
                         app.page = Page::Device;
                     }
                 });
             });
         });
-        ui.add_space(12.0);
+        ui.add_space(14.0);
     }
 
-    ui.add_space(4.0);
     theme::card(ui, |ui| {
-        ui.set_width(ui.available_width());
-        ui.label(
-            egui::RichText::new("Supported models")
-                .font(theme::semibold(15.0))
-                .color(p.text),
-        );
+        ui.horizontal(|ui| {
+            icons::show(ui, Icon::Help, 16.0, p.muted);
+            ui.label(
+                egui::RichText::new("Supported models")
+                    .font(theme::semibold(15.0))
+                    .color(p.text),
+            );
+        });
+        ui.add_space(4.0);
         for spec in opencreative_device::SUPPORTED {
             ui.label(
                 egui::RichText::new(format!(
@@ -111,33 +177,40 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         }
         ui.label(
             egui::RichText::new(
-                "Another DeepCool cooler? Open an issue with its USB ID to help add support.",
+                "Another DeepCool cooler? See \"Adding a device\" in the README to help add it.",
             )
             .small()
             .color(p.faint),
         );
     });
-    ui.add_space(56.0);
+    ui.add_space(24.0);
 }
 
-/// The cooler as a framed screen, showing the live preview when connected.
-fn thumbnail(app: &App, ui: &mut egui::Ui, connected: bool) {
-    let p = Palette::of(ui.ctx());
-    let (rect, _) = ui.allocate_exact_size(THUMB, Sense::hover());
-    let painter = ui.painter();
-    painter.rect_filled(rect, 12.0, p.bezel);
-    let inner = rect.shrink(10.0);
-    match (&app.preview.texture, connected) {
-        (Some(texture), true) => {
-            painter.image(
-                texture.id(),
-                inner,
-                egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                Color32::WHITE,
-            );
-        }
-        _ => {
-            painter.rect_filled(inner, 2.0, Color32::from_gray(12));
-        }
+/// The cooler's product picture in the chosen finish, with the live preview
+/// on the pump's screen when it's the connected one.
+fn picture(app: &App, ui: &mut egui::Ui, width: f32, connected: bool) {
+    let pic = picture_of(app.prefs.model, app.prefs.finish);
+    let size = vec2(width, width / pic.aspect);
+    let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
+    egui::Image::new(pic.source)
+        .fit_to_exact_size(size)
+        .paint_at(ui, rect);
+    if let (Some(texture), true) = (&app.preview.texture, connected) {
+        let at = |x: f32, y: f32| {
+            pos2(
+                rect.left() + x * rect.width(),
+                rect.top() + y * rect.height(),
+            )
+        };
+        let screen = Rect::from_min_max(
+            at(pic.screen.min.x, pic.screen.min.y),
+            at(pic.screen.max.x, pic.screen.max.y),
+        );
+        ui.painter().image(
+            texture.id(),
+            screen,
+            Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+            Color32::WHITE,
+        );
     }
 }

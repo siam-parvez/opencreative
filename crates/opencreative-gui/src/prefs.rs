@@ -11,9 +11,9 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "snake_case")]
 pub enum Appearance {
     /// Follow the desktop's light/dark setting.
-    #[default]
     System,
     Light,
+    #[default]
     Dark,
 }
 
@@ -27,9 +27,31 @@ impl Appearance {
     }
 }
 
+/// The cooler's finish, for its picture on the Devices page. USB can't tell
+/// the two apart, so the user picks.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Finish {
+    #[default]
+    Black,
+    White,
+}
+
+/// Which LM-series model this is. LM240 and LM360 share a USB ID, so the
+/// user picks; it only changes the picture.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Model {
+    #[default]
+    Lm240,
+    Lm360,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Prefs {
+    pub model: Model,
+    pub finish: Finish,
     pub appearance: Appearance,
     /// Show Claude plan usage (off unless the user turns it on).
     pub claude_usage: bool,
@@ -65,6 +87,8 @@ mod tests {
     #[test]
     fn round_trips_through_toml() {
         let prefs = Prefs {
+            model: Model::Lm360,
+            finish: Finish::White,
             appearance: Appearance::Dark,
             claude_usage: true,
             first_run_done: true,
