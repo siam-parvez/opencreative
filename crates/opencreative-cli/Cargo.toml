@@ -13,6 +13,7 @@ name = "opencreative"
 path = "src/main.rs"
 
 [dependencies]
+opencreative-core.workspace = true
 opencreative-device.workspace = true
 opencreative-render.workspace = true
 opencreative-sensors.workspace = true

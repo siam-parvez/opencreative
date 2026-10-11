@@ -2,13 +2,14 @@
 
 use std::path::{Path, PathBuf};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand, ValueEnum};
-use opencreative_device::{self as device, Display};
+use opencreative_core::{Player, Scene};
+use opencreative_device as device;
 use opencreative_render::media::{self, Fit};
-use opencreative_render::{Pixmap, Rotation, monitor, rotate, solid};
+use opencreative_render::{Rotation, monitor, rotate};
 use opencreative_sensors::Sensors;
 
 #[derive(Parser)]
@@ -124,13 +125,18 @@ fn main() -> Result<()> {
         Command::Sensors => sensors(),
         Command::Brightness { percent } => Ok(device::open(serial)?.set_brightness(percent)?),
         Command::ScreenToggle => Ok(device::open(serial)?.screen_toggle()?),
-        Command::Solid { color } => {
-            let mut dev = device::open(serial)?;
-            let (w, h) = logical_size(dev.as_ref(), rotation);
-            show(dev.as_mut(), &solid(w, h, color), rotation)
+        Command::Solid { color } => play(Scene::Solid(color), serial, rotation),
+        Command::Image { path, fit } => {
+            let fit = fit.into();
+            play(Scene::Media { path, fit }, serial, rotation)
         }
-        Command::Image { path, fit } => image(serial, &path, fit.into(), rotation),
-        Command::Monitor { interval } => run_monitor(serial, interval, rotation),
+        Command::Monitor { interval } => {
+            if !(interval.is_finite() && interval > 0.0) {
+                bail!("interval must be a positive number of seconds");
+            }
+            let interval = Duration::from_secs_f64(interval);
+            play(Scene::Monitor { interval }, serial, rotation)
+        }
         Command::Preview { what, output } => preview(what, &output, rotation),
     }
 }
@@ -183,81 +189,11 @@ fn default_logical_size(rotation: Rotation) -> (u32, u32) {
     rotation.logical_size(spec.width, spec.height)
 }
 
-fn logical_size(dev: &dyn Display, rotation: Rotation) -> (u32, u32) {
-    let spec = dev.spec();
-    rotation.logical_size(spec.width, spec.height)
-}
-
-fn show(dev: &mut dyn Display, frame: &Pixmap, rotation: Rotation) -> Result<()> {
-    dev.send_frame(rotate(frame, rotation).data())?;
+/// Shows a scene. Animated scenes and the monitor run until interrupted.
+fn play(scene: Scene, serial: Option<&str>, rotation: Rotation) -> Result<()> {
+    let mut player = Player::new(scene, rotation);
+    opencreative_core::run(&mut player, serial)?;
     Ok(())
-}
-
-fn image(serial: Option<&str>, path: &Path, fit: Fit, rotation: Rotation) -> Result<()> {
-    let mut dev = device::open(serial)?;
-    let (w, h) = logical_size(dev.as_ref(), rotation);
-    let frames =
-        media::load(path, w, h, fit).with_context(|| format!("loading {}", path.display()))?;
-    // Rotate once up front so animation playback is just USB writes.
-    let frames: Vec<_> = frames
-        .into_iter()
-        .map(|f| (rotate(&f.pixmap, rotation), f.delay))
-        .collect();
-
-    if let [(still, _)] = frames.as_slice() {
-        dev.send_frame(still.data())?;
-        return Ok(());
-    }
-    log::info!("playing {} frames, Ctrl+C to stop", frames.len());
-    loop {
-        for (frame, delay) in &frames {
-            let started = Instant::now();
-            dev.send_frame(frame.data())?;
-            thread::sleep(delay.saturating_sub(started.elapsed()));
-        }
-    }
-}
-
-/// How long to wait before retrying after the device disappears (e.g. a
-/// replug or suspend/resume).
-const RECONNECT_DELAY: Duration = Duration::from_secs(2);
-
-fn run_monitor(serial: Option<&str>, interval: f64, rotation: Rotation) -> Result<()> {
-    if !(interval.is_finite() && interval > 0.0) {
-        bail!("interval must be a positive number of seconds");
-    }
-    let interval = Duration::from_secs_f64(interval);
-    let mut sensors = Sensors::new();
-    let mut dev: Option<Box<dyn Display>> = None;
-
-    loop {
-        let started = Instant::now();
-        let snap = sensors.read();
-
-        if dev.is_none() {
-            match device::open(serial) {
-                Ok(d) => {
-                    log::info!("connected to {}", d.spec().name);
-                    dev = Some(d);
-                }
-                Err(e @ device::Error::PermissionDenied) => return Err(e.into()),
-                Err(e) => {
-                    log::warn!("{e}; retrying in {RECONNECT_DELAY:?}");
-                    thread::sleep(RECONNECT_DELAY);
-                    continue;
-                }
-            }
-        }
-        let d = dev.as_mut().expect("connected above");
-        let (w, h) = logical_size(d.as_ref(), rotation);
-        let clock = chrono::Local::now().format("%H:%M").to_string();
-        let frame = monitor::render(&snap, &clock, w, h);
-        if let Err(e) = show(d.as_mut(), &frame, rotation) {
-            log::warn!("lost device: {e}");
-            dev = None;
-        }
-        thread::sleep(interval.saturating_sub(started.elapsed()));
-    }
 }
 
 fn preview(what: PreviewWhat, output: &Path, rotation: Rotation) -> Result<()> {

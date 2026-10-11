@@ -5,6 +5,7 @@ members = [
     "crates/opencreative-device",
     "crates/opencreative-sensors",
     "crates/opencreative-render",
+    "crates/opencreative-core",
     "crates/opencreative-cli",
 ]
 
@@ -21,6 +22,7 @@ opencreative-protocol = { path = "crates/opencreative-protocol" }
 opencreative-device = { path = "crates/opencreative-device" }
 opencreative-sensors = { path = "crates/opencreative-sensors" }
 opencreative-render = { path = "crates/opencreative-render" }
+opencreative-core = { path = "crates/opencreative-core" }
 
 anyhow = "1"
 thiserror = "2"
