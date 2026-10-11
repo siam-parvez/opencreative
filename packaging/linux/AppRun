@@ -1,0 +1,9 @@
+#!/bin/sh
+# AppImage entry point: no arguments opens the app; arguments run the
+# `opencreative` command (e.g. `OpenCreative.AppImage daemon`), which is how
+# the background service and `uninstall` call it.
+HERE="$(dirname "$(readlink -f "$0")")"
+if [ "$#" -gt 0 ] && [ "$1" != "--uninstall" ]; then
+    exec "$HERE/usr/bin/opencreative" "$@"
+fi
+exec "$HERE/usr/bin/opencreative-gui" "$@"

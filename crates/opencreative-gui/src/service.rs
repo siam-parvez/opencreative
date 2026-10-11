@@ -9,6 +9,8 @@ use std::process::Command;
 pub type Result<T> = std::result::Result<T, String>;
 
 const UNIT_NAME: &str = "opencreative";
+/// The unit a distribution package installs.
+const PACKAGED_UNIT: &str = "/usr/lib/systemd/user/opencreative.service";
 const UNIT_TEMPLATE: &str = include_str!("../../../packaging/linux/opencreative.service");
 const UNIT_EXEC_PLACEHOLDER: &str = "%h/.cargo/bin/opencreative";
 
@@ -51,7 +53,7 @@ pub struct ServiceState {
 pub fn query() -> ServiceState {
     let succeeds = |verb| systemctl(&[verb, "--quiet", UNIT_NAME]).is_ok();
     ServiceState {
-        installed: unit_path().is_some_and(|p| p.exists()),
+        installed: unit_path().is_some_and(|p| p.exists()) || Path::new(PACKAGED_UNIT).exists(),
         enabled: succeeds("is-enabled"),
         active: succeeds("is-active"),
     }
@@ -93,7 +95,8 @@ fn unit_path() -> Option<PathBuf> {
 /// existing unit (e.g. one the user edited) is left alone.
 fn install_unit() -> Result<()> {
     let path = unit_path().ok_or("no config directory")?;
-    if path.exists() {
+    // A packaged install ships its own unit, removed with the package.
+    if path.exists() || (packaged() && Path::new(PACKAGED_UNIT).exists()) {
         return Ok(());
     }
     let cli = cli_binary().ok_or(
@@ -104,8 +107,27 @@ fn install_unit() -> Result<()> {
     write(&path, unit.as_bytes())
 }
 
-/// The `opencreative` CLI: next to this app, else on `PATH`.
+/// What launches this app from outside: the AppImage file when running
+/// from one (its mount point changes every run), else this binary.
+fn launcher() -> Option<PathBuf> {
+    env::var_os("APPIMAGE")
+        .map(PathBuf::from)
+        .or_else(|| env::current_exe().ok())
+}
+
+/// Installed by a distribution package (binary under `/usr`, not
+/// `/usr/local`): the package manager handles the menu entry and removal.
+pub fn packaged() -> bool {
+    env::var_os("APPIMAGE").is_none()
+        && env::current_exe().is_ok_and(|p| p.starts_with("/usr") && !p.starts_with("/usr/local"))
+}
+
+/// The `opencreative` CLI: the AppImage (its launcher runs the CLI when
+/// given arguments), else next to this app, else on `PATH`.
 fn cli_binary() -> Option<PathBuf> {
+    if let Some(image) = env::var_os("APPIMAGE") {
+        return Some(image.into());
+    }
     let beside = env::current_exe().ok()?.with_file_name("opencreative");
     if beside.is_file() {
         return Some(beside);
@@ -170,6 +192,25 @@ impl Rule {
     }
 }
 
+/// Uninstalls a download install with the CLI, removing the settings too
+/// when `purge`. Blocks until done (and any password prompt is answered).
+pub fn uninstall(purge: bool) -> Result<()> {
+    let cli = cli_binary().ok_or("couldn't find the `opencreative` command")?;
+    let mut cmd = Command::new(cli);
+    cmd.args(["uninstall", "--yes"]);
+    if purge {
+        cmd.arg("--purge");
+    }
+    let out = cmd
+        .output()
+        .map_err(|e| format!("running uninstall: {e}"))?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        Err(String::from_utf8_lossy(&out.stderr).trim().to_owned())
+    }
+}
+
 /// Runs a shell script as root through polkit's password prompt.
 fn as_root(script: &str) -> Result<()> {
     let out = Command::new("pkexec")
@@ -200,9 +241,11 @@ pub fn desktop_entry_installed() -> bool {
     desktop_entry_path().is_some_and(|p| p.exists())
 }
 
-/// Adds OpenCreative to the desktop's app menu, launching this binary.
+/// Adds OpenCreative to the desktop's app menu, launching this app. The
+/// entry's "Uninstall" action reopens the app on its uninstall prompt.
 pub fn install_desktop_entry() -> Result<()> {
-    let exe = env::current_exe().map_err(|e| e.to_string())?;
+    let exe = launcher().ok_or("couldn't find this program")?;
+    // Both the main and the "Uninstall" action's Exec lines.
     let entry = DESKTOP_TEMPLATE.replace(
         "Exec=opencreative-gui",
         &format!("Exec=\"{}\"", exe.display()),
@@ -250,6 +293,7 @@ mod tests {
     #[test]
     fn desktop_template_has_the_exec_line() {
         assert!(DESKTOP_TEMPLATE.contains("\nExec=opencreative-gui\n"));
+        assert!(DESKTOP_TEMPLATE.contains("\nExec=opencreative-gui --uninstall\n"));
     }
 
     #[test]

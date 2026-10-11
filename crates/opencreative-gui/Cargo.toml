@@ -1,6 +1,6 @@
 [package]
 name = "opencreative-gui"
-description = "OpenCreative desktop app"
+description = "Customize DeepCool LCD cooler screens"
 version.workspace = true
 edition.workspace = true
 # eframe 0.36 needs 1.95; the rest of the workspace stays at 1.88.
@@ -34,3 +34,49 @@ egui_extras = { version = "0.36", default-features = false, features = ["svg", "
 image.workspace = true
 log.workspace = true
 env_logger.workspace = true
+
+# `cargo deb -p opencreative-gui` (after building both binaries) makes the
+# one `opencreative` package: the app, the CLI/daemon, the USB rule, the app
+# menu entry and the background service.
+[package.metadata.deb]
+name = "opencreative"
+maintainer = "Siam Parvez <hello@siamparvez.com>"
+copyright = "OpenCreative contributors"
+license-file = ["../../LICENSE-MIT", "0"]
+section = "utils"
+priority = "optional"
+depends = "$auto"
+extended-description = """\
+Open-source control for DeepCool LCD coolers (LM240, LM360): live readings \
+in a choice of skins, images and GIFs, and a dashboard of this computer's \
+readings. Not affiliated with DeepCool."""
+maintainer-scripts = "../../packaging/linux/debian/"
+assets = [
+    ["target/release/opencreative-gui", "usr/bin/", "755"],
+    ["target/release/opencreative", "usr/bin/", "755"],
+    ["../../packaging/linux/60-opencreative.rules", "usr/lib/udev/rules.d/", "644"],
+    ["../../packaging/linux/61-opencreative-power.rules", "usr/share/opencreative/", "644"],
+    ["../../packaging/linux/package/opencreative.desktop", "usr/share/applications/", "644"],
+    ["../../packaging/linux/package/opencreative.service", "usr/lib/systemd/user/", "644"],
+    ["../../packaging/linux/opencreative.png", "usr/share/icons/hicolor/256x256/apps/", "644"],
+    ["../../packaging/linux/io.github.siam_parvez.opencreative.metainfo.xml", "usr/share/metainfo/", "644"],
+    ["../../README.md", "usr/share/doc/opencreative/", "644"],
+]
+
+[package.metadata.generate-rpm]
+name = "opencreative"
+license = "MIT OR Apache-2.0"
+summary = "Customize DeepCool LCD cooler screens"
+post_install_script = "udevadm control --reload || :; udevadm trigger --subsystem-match=usb --attr-match=idVendor=3633 || :"
+post_uninstall_script = "udevadm control --reload || :"
+assets = [
+    { source = "target/release/opencreative-gui", dest = "/usr/bin/opencreative-gui", mode = "755" },
+    { source = "target/release/opencreative", dest = "/usr/bin/opencreative", mode = "755" },
+    { source = "../../packaging/linux/60-opencreative.rules", dest = "/usr/lib/udev/rules.d/60-opencreative.rules", mode = "644" },
+    { source = "../../packaging/linux/61-opencreative-power.rules", dest = "/usr/share/opencreative/61-opencreative-power.rules", mode = "644" },
+    { source = "../../packaging/linux/package/opencreative.desktop", dest = "/usr/share/applications/opencreative.desktop", mode = "644" },
+    { source = "../../packaging/linux/package/opencreative.service", dest = "/usr/lib/systemd/user/opencreative.service", mode = "644" },
+    { source = "../../packaging/linux/opencreative.png", dest = "/usr/share/icons/hicolor/256x256/apps/opencreative.png", mode = "644" },
+    { source = "../../packaging/linux/io.github.siam_parvez.opencreative.metainfo.xml", dest = "/usr/share/metainfo/io.github.siam_parvez.opencreative.metainfo.xml", mode = "644" },
+    { source = "../../README.md", dest = "/usr/share/doc/opencreative/README.md", mode = "644", doc = true },
+]

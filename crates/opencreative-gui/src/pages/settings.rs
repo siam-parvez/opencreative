@@ -135,8 +135,15 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             setting_row(
                 ui,
                 "Show in the app menu",
-                "Adds OpenCreative with its icon to your desktop's launcher.",
+                if service::packaged() {
+                    "Your package already adds OpenCreative to the app menu."
+                } else {
+                    "Adds OpenCreative with its icon to your desktop's launcher."
+                },
                 |ui| {
+                    if service::packaged() {
+                        return;
+                    }
                     let mut on = service::desktop_entry_installed();
                     if toggle(ui, &mut on).changed() {
                         let result = if on {
@@ -201,6 +208,21 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             }
         });
     });
+
+    if SERVICE_SUPPORTED {
+        group(ui, "Uninstall", |ui| {
+            let description = if service::packaged() {
+                "Installed by your package manager: remove OpenCreative from your software center."
+            } else {
+                "Removes the program, the background service, the app-menu entry and the USB rule."
+            };
+            setting_row(ui, "Uninstall OpenCreative", description, |ui| {
+                if !service::packaged() && ui.button("Uninstall…").clicked() {
+                    app.uninstall_prompt = Some(false);
+                }
+            });
+        });
+    }
 
     group(ui, "About", |ui| {
         ui.label(

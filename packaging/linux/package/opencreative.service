@@ -1,0 +1,13 @@
+# systemd user service for packaged installs; the app enables it from
+# Settings → Start with the computer.
+
+[Unit]
+Description=OpenCreative cooler screen
+
+[Service]
+ExecStart=/usr/bin/opencreative daemon
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

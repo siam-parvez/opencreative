@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.siam_parvez.opencreative</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT OR Apache-2.0</project_license>
+  <name>OpenCreative</name>
+  <summary>Customize DeepCool LCD cooler screens</summary>
+  <description>
+    <p>
+      Open-source control for DeepCool's LCD coolers, an alternative to the
+      Windows-only DeepCreative app. Show live CPU, GPU, memory and power
+      readings in a choice of skins, or your own images and GIFs, and see
+      your computer's readings on a dashboard.
+    </p>
+    <p>Not affiliated with or endorsed by DeepCool.</p>
+  </description>
+  <launchable type="desktop-id">opencreative.desktop</launchable>
+  <url type="homepage">https://github.com/siam-parvez/opencreative</url>
+  <url type="bugtracker">https://github.com/siam-parvez/opencreative/issues</url>
+  <developer id="io.github.siam_parvez">
+    <name>Siam Parvez</name>
+  </developer>
+  <screenshots>
+    <screenshot type="default">
+      <image>https://raw.githubusercontent.com/siam-parvez/opencreative/main/docs/screenshots/devices.png</image>
+    </screenshot>
+  </screenshots>
+  <provides>
+    <modalias>usb:v3633p0026*</modalias>
+  </provides>
+  <categories>
+    <category>Utility</category>
+    <category>Settings</category>
+  </categories>
+  <content_rating type="oars-1.1"/>
+</component>
