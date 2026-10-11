@@ -17,6 +17,8 @@ pub enum Metric {
     GpuPower,
     RamUsage,
     RamUsed,
+    /// The whole computer's power draw (an estimate; see `Snapshot`).
+    SystemPower,
     /// Claude's 5-hour limit, used percent.
     #[serde(rename = "claude_5h")]
     ClaudeSession,
@@ -33,7 +35,7 @@ pub struct Reading {
 }
 
 impl Metric {
-    pub const ALL: [Metric; 12] = [
+    pub const ALL: [Metric; 13] = [
         Metric::CpuTemp,
         Metric::CpuLoad,
         Metric::CpuFreq,
@@ -44,6 +46,7 @@ impl Metric {
         Metric::GpuPower,
         Metric::RamUsage,
         Metric::RamUsed,
+        Metric::SystemPower,
         Metric::ClaudeSession,
         Metric::ClaudeWeekly,
     ];
@@ -66,6 +69,7 @@ impl Metric {
             Metric::GpuPower => "gpu_power",
             Metric::RamUsage => "ram_usage",
             Metric::RamUsed => "ram_used",
+            Metric::SystemPower => "system_power",
             Metric::ClaudeSession => "claude_5h",
             Metric::ClaudeWeekly => "claude_week",
         }
@@ -84,6 +88,7 @@ impl Metric {
             Metric::GpuPower => "GPU POWER",
             Metric::RamUsage => "RAM USAGE",
             Metric::RamUsed => "RAM USED",
+            Metric::SystemPower => "PC POWER",
             Metric::ClaudeSession => "5H LIMIT",
             Metric::ClaudeWeekly => "WEEKLY LIMIT",
         }
@@ -102,6 +107,7 @@ impl Metric {
             Metric::GpuPower => "GPU power",
             Metric::RamUsage => "RAM usage",
             Metric::RamUsed => "RAM used",
+            Metric::SystemPower => "PC power (estimate)",
             Metric::ClaudeSession => "Claude 5-hour limit",
             Metric::ClaudeWeekly => "Claude weekly limit",
         }
@@ -135,6 +141,7 @@ impl Metric {
                 (s.mem_total_bytes > 0).then(|| format!("{:.1}", s.mem_used_bytes as f64 / GIB)),
                 "GB",
             ),
+            Metric::SystemPower => r(s.system_power_w.map(watts), "W"),
             Metric::ClaudeSession => r(s.claude.and_then(|c| c.session).map(|w| one(w.pct)), "%"),
             Metric::ClaudeWeekly => r(s.claude.and_then(|c| c.weekly).map(|w| one(w.pct)), "%"),
         }

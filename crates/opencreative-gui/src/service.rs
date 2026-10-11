@@ -12,10 +12,31 @@ const UNIT_NAME: &str = "opencreative";
 const UNIT_TEMPLATE: &str = include_str!("../../../packaging/linux/opencreative.service");
 const UNIT_EXEC_PLACEHOLDER: &str = "%h/.cargo/bin/opencreative";
 
-const UDEV_RULES: &str = include_str!("../../../packaging/linux/60-opencreative.rules");
-const UDEV_RULE_PATH: &str = "/etc/udev/rules.d/60-opencreative.rules";
-/// Where distribution packages put the rule instead.
-const UDEV_PACKAGED_PATH: &str = "/usr/lib/udev/rules.d/60-opencreative.rules";
+/// A udev rule we can install with the admin password.
+struct Rule {
+    text: &'static str,
+    path: &'static str,
+    /// Where distribution packages put the rule instead.
+    packaged: &'static str,
+    /// Re-applies the rule to devices that are already there.
+    trigger: &'static str,
+}
+
+/// USB access to the cooler.
+const USB_RULE: Rule = Rule {
+    text: include_str!("../../../packaging/linux/60-opencreative.rules"),
+    path: "/etc/udev/rules.d/60-opencreative.rules",
+    packaged: "/usr/lib/udev/rules.d/60-opencreative.rules",
+    trigger: "udevadm trigger",
+};
+
+/// Readable CPU energy counters, for power readings. Optional.
+const POWER_RULE: Rule = Rule {
+    text: include_str!("../../../packaging/linux/61-opencreative-power.rules"),
+    path: "/etc/udev/rules.d/61-opencreative-power.rules",
+    packaged: "/usr/lib/udev/rules.d/61-opencreative-power.rules",
+    trigger: "udevadm trigger --subsystem-match=powercap --action=add",
+};
 
 const DESKTOP_TEMPLATE: &str = include_str!("../../../packaging/linux/opencreative.desktop");
 
@@ -95,33 +116,64 @@ fn cli_binary() -> Option<PathBuf> {
 }
 
 pub fn udev_rule_installed() -> bool {
-    Path::new(UDEV_RULE_PATH).exists() || Path::new(UDEV_PACKAGED_PATH).exists()
+    USB_RULE.installed()
 }
 
-/// Shell that writes the rule and reloads udev. Needs root.
-fn udev_script() -> String {
-    let lines: Vec<String> = UDEV_RULES
-        .lines()
-        .filter(|l| !l.trim().is_empty() && !l.starts_with('#'))
-        // Rule lines contain double quotes but never single quotes.
-        .map(|l| format!("'{l}'"))
-        .collect();
-    format!(
-        "printf '%s\\n' {} > {UDEV_RULE_PATH} && udevadm control --reload && udevadm trigger",
-        lines.join(" ")
-    )
-}
-
-/// The same as a command the user can paste into a terminal.
+/// The USB rule's install script as a command to paste into a terminal.
 pub fn udev_install_command() -> String {
-    format!("sudo sh -c \"{}\"", udev_script().replace('"', "\\\""))
+    format!("sudo sh -c \"{}\"", USB_RULE.script().replace('"', "\\\""))
 }
 
-/// Installs the rule, asking for the admin password through polkit.
+/// Installs the USB rule, asking for the admin password through polkit.
 /// Blocks until the user answers the prompt.
 pub fn install_udev_rule() -> Result<()> {
+    as_root(&USB_RULE.script())
+}
+
+pub fn power_rule_installed() -> bool {
+    POWER_RULE.installed()
+}
+
+/// Installs or removes the power rule (asks for the admin password).
+/// Removing it also makes the counters root-only again right away.
+pub fn set_power_rule(on: bool) -> Result<()> {
+    if on {
+        as_root(&POWER_RULE.script())
+    } else {
+        as_root(&format!(
+            "rm -f {} && udevadm control --reload && chmod 0400 /sys/class/powercap/intel-rapl:*/energy_uj",
+            POWER_RULE.path
+        ))
+    }
+}
+
+impl Rule {
+    fn installed(&self) -> bool {
+        Path::new(self.path).exists() || Path::new(self.packaged).exists()
+    }
+
+    /// Shell that writes the rule and applies it. Needs root.
+    fn script(&self) -> String {
+        let lines: Vec<String> = self
+            .text
+            .lines()
+            .filter(|l| !l.trim().is_empty() && !l.starts_with('#'))
+            // Rule lines contain double quotes but never single quotes.
+            .map(|l| format!("'{l}'"))
+            .collect();
+        format!(
+            "printf '%s\\n' {} > {} && udevadm control --reload && {}",
+            lines.join(" "),
+            self.path,
+            self.trigger
+        )
+    }
+}
+
+/// Runs a shell script as root through polkit's password prompt.
+fn as_root(script: &str) -> Result<()> {
     let out = Command::new("pkexec")
-        .args(["sh", "-c", &udev_script()])
+        .args(["sh", "-c", script])
         .output()
         .map_err(|e| format!("running pkexec: {e}"))?;
     if out.status.success() {
@@ -201,10 +253,13 @@ mod tests {
     }
 
     #[test]
-    fn udev_script_writes_only_rule_lines() {
-        let script = udev_script();
+    fn udev_scripts_write_only_rule_lines() {
+        let script = USB_RULE.script();
         assert!(script.contains("ATTRS{idVendor}==\"3633\""));
         assert!(!script.contains("# "), "comments are dropped");
-        assert!(script.contains(UDEV_RULE_PATH));
+        assert!(script.contains(USB_RULE.path));
+        let power = POWER_RULE.script();
+        assert!(power.contains("chmod 0444 /sys%p/energy_uj"));
+        assert!(power.ends_with("--subsystem-match=powercap --action=add"));
     }
 }

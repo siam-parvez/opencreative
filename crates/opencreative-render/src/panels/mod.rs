@@ -12,6 +12,7 @@ use crate::monitor::rgb;
 const CPU: [u8; 3] = [0x58, 0xd0, 0xe8];
 const GPU: [u8; 3] = [0xe8, 0xc0, 0x60];
 const RAM: [u8; 3] = [0x70, 0xd8, 0x90];
+const SYSTEM: [u8; 3] = [0xe8, 0xf0, 0x30];
 /// Claude's coral.
 const CLAUDE: [u8; 3] = [0xe0, 0x88, 0x60];
 
@@ -72,6 +73,7 @@ fn accent(metric: Metric) -> [u8; 3] {
         Metric::CpuTemp | Metric::CpuLoad | Metric::CpuFreq | Metric::CpuPower => CPU,
         Metric::GpuTemp | Metric::GpuLoad | Metric::GpuFreq | Metric::GpuPower => GPU,
         Metric::RamUsage | Metric::RamUsed => RAM,
+        Metric::SystemPower => SYSTEM,
         Metric::ClaudeSession | Metric::ClaudeWeekly => CLAUDE,
     }
 }
@@ -172,6 +174,7 @@ fn level(snap: &Snapshot, metric: Metric) -> Option<f32> {
         Metric::GpuFreq => snap.gpu.mhz? as f32 / 3000.0,
         Metric::CpuPower => snap.cpu_power_w? / 250.0,
         Metric::GpuPower => snap.gpu.power_w? / 450.0,
+        Metric::SystemPower => snap.system_power_w? / 800.0,
         Metric::ClaudeSession => pct(snap.claude?.session?.pct),
         Metric::ClaudeWeekly => pct(snap.claude?.weekly?.pct),
     })

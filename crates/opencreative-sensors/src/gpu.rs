@@ -100,8 +100,22 @@ mod sysfs {
             mhz: active_sclk(device),
             vram_used_bytes: read_u64(&device.join("mem_info_vram_used")),
             vram_total_bytes: read_u64(&device.join("mem_info_vram_total")),
+            power_w: hwmon_watts(device),
             ..Gpu::default()
         }
+    }
+
+    /// Board power from the card's hwmon, in watts (sysfs has microwatts).
+    fn hwmon_watts(device: &Path) -> Option<f32> {
+        fs::read_dir(device.join("hwmon"))
+            .ok()?
+            .flatten()
+            .find_map(|e| {
+                ["power1_average", "power1_input"]
+                    .iter()
+                    .find_map(|f| read_u64(&e.path().join(f)))
+            })
+            .map(|uw| uw as f32 / 1e6)
     }
 
     /// The active core clock: the line marked `*` in `pp_dpm_sclk`.
