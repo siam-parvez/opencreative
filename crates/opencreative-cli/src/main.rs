@@ -1,7 +1,5 @@
 //! `opencreative` command-line tool.
 
-mod daemon;
-
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::thread;
@@ -51,8 +49,11 @@ enum Command {
         #[arg(value_parser = clap::value_parser!(u8).range(0..=100))]
         percent: u8,
     },
-    /// Toggle the screen on/off.
-    ScreenToggle,
+    /// Turn the screen off (backlight off) or back on.
+    Screen {
+        #[arg(value_enum)]
+        state: OnOff,
+    },
     /// Fill the screen with one color, e.g. `#ff8800`.
     Solid { color: Rgb },
     /// Show an image. Animated GIFs loop until interrupted.
@@ -97,6 +98,12 @@ enum PreviewWhat {
 }
 
 #[derive(Clone, Copy, ValueEnum)]
+enum OnOff {
+    On,
+    Off,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
 enum FitArg {
     Cover,
     Contain,
@@ -138,7 +145,7 @@ fn main() -> Result<()> {
         Command::List => list(),
         Command::Sensors => sensors(),
         Command::Preview { what, output } => preview(what, &output, rotation.unwrap_or_default()),
-        Command::Daemon { config } => daemon::run(config),
+        Command::Daemon { config } => opencreative_daemon::run(config),
         Command::Status => status(connect_daemon(cli.no_daemon)?),
         command => match connect_daemon(cli.no_daemon)? {
             Some(client) => send_to_daemon(client, command, cli.rotate, serial),
@@ -158,7 +165,14 @@ fn connect_daemon(disabled: bool) -> Result<Option<ipc::Client>> {
 fn run_direct(command: Command, serial: Option<&str>, rotation: Rotation) -> Result<()> {
     match command {
         Command::Brightness { percent } => Ok(device::open(serial)?.set_brightness(percent)?),
-        Command::ScreenToggle => Ok(device::open(serial)?.screen_toggle()?),
+        Command::Screen { state } => {
+            // Without a daemon there is no remembered level; use the saved one.
+            let level = match state {
+                OnOff::Off => 0,
+                OnOff::On => saved_brightness().unwrap_or(100),
+            };
+            Ok(device::open(serial)?.set_brightness(level)?)
+        }
         Command::Solid { color } => play(Scene::Solid(color.0), serial, rotation),
         Command::Image { path, fit } => {
             let fit = fit.into();
@@ -191,7 +205,9 @@ fn send_to_daemon(
     }
     requests.push(match command {
         Command::Brightness { percent } => Request::SetBrightness { percent },
-        Command::ScreenToggle => Request::ScreenToggle,
+        Command::Screen { state } => Request::SetScreen {
+            on: matches!(state, OnOff::On),
+        },
         Command::Solid { color } => Request::SetScene {
             scene: SceneConfig::Solid { color },
         },
@@ -226,6 +242,12 @@ fn send_to_daemon(
     Ok(())
 }
 
+/// Brightness from the config file, if one sets it.
+fn saved_brightness() -> Option<u8> {
+    let path = opencreative_config::default_path().ok()?;
+    opencreative_config::load(&path).ok()?.brightness
+}
+
 fn status(client: Option<ipc::Client>) -> Result<()> {
     let Some(mut client) = client else {
         println!(
@@ -240,6 +262,7 @@ fn status(client: Option<ipc::Client>) -> Result<()> {
                 "Device: {}",
                 status.device.as_deref().unwrap_or("not connected")
             );
+            println!("Screen: {}", if status.screen_on { "on" } else { "off" });
             print!("{}", toml::to_string_pretty(&status.config)?);
             Ok(())
         }

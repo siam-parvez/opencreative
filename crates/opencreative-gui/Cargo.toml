@@ -1,0 +1,26 @@
+[package]
+name = "opencreative-gui"
+description = "OpenCreative desktop app"
+version.workspace = true
+edition.workspace = true
+# eframe 0.36 needs 1.95; the rest of the workspace stays at 1.88.
+rust-version = "1.95"
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "opencreative-gui"
+path = "src/main.rs"
+
+[dependencies]
+opencreative-config.workspace = true
+opencreative-core.workspace = true
+opencreative-daemon.workspace = true
+opencreative-device.workspace = true
+opencreative-ipc.workspace = true
+opencreative-protocol.workspace = true
+opencreative-render.workspace = true
+eframe.workspace = true
+log.workspace = true
+env_logger.workspace = true

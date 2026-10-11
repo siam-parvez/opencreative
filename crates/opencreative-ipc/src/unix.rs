@@ -156,6 +156,7 @@ mod tests {
                 .serve(|req| match req {
                     Request::Status => Response::Status(Status {
                         device: None,
+                        screen_on: true,
                         config: Config::default(),
                     }),
                     _ => Response::Ok,
@@ -175,7 +176,7 @@ mod tests {
         spawn_server(&path);
         let mut client = Client::connect(&path).unwrap().expect("daemon is up");
         assert_eq!(
-            client.request(&Request::ScreenToggle).unwrap(),
+            client.request(&Request::SetScreen { on: false }).unwrap(),
             Response::Ok
         );
         assert!(matches!(

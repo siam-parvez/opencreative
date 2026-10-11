@@ -48,10 +48,6 @@ impl Display for LmSeries {
         usb::bulk_write(&mut self.ep, &lm::set_brightness(percent))
     }
 
-    fn screen_toggle(&mut self) -> Result<()> {
-        usb::bulk_write(&mut self.ep, &lm::screen_toggle())
-    }
-
     fn send_frame(&mut self, rgba: &[u8]) -> Result<()> {
         if rgba.len() != RGBA_FRAME_BYTES {
             return Err(Error::FrameSize {

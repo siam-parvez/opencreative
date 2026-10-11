@@ -15,18 +15,33 @@ pub enum Command {
     SetScene(Scene),
     SetRotation(Rotation),
     SetBrightness(u8),
-    ScreenToggle,
+    /// Turns the screen on or off. Off is backlight 0 with frames paused:
+    /// the protocol has no confirmed "display off" command.
+    SetScreen(bool),
 }
 
 /// What the daemon reports about itself.
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct DaemonState {
     /// Name of the connected device, if any.
     pub device: Option<String>,
+    pub screen_on: bool,
+}
+
+impl Default for DaemonState {
+    fn default() -> Self {
+        Self {
+            device: None,
+            screen_on: true,
+        }
+    }
 }
 
 /// How often a still frame is re-sent, so it comes back after a replug.
 const STILL_REFRESH: Duration = Duration::from_secs(5);
+
+/// Brightness used when turning the screen back on if none was ever chosen.
+const DEFAULT_BRIGHTNESS: u8 = 100;
 
 /// Keeps `player`'s scene on the device until `commands` is closed. Waits for
 /// a device to appear, reconnects when it disappears, and applies commands as
@@ -41,21 +56,20 @@ pub fn run_daemon(
     state: Arc<Mutex<DaemonState>>,
 ) {
     let mut dev: Option<Box<dyn Display>> = None;
-    let set_device = |name: Option<&str>| {
-        state.lock().expect("state lock").device = name.map(str::to_owned);
-    };
+    let mut screen_on = true;
+    let update = |f: &dyn Fn(&mut DaemonState)| f(&mut state.lock().expect("state lock"));
 
     loop {
         if dev.is_none() {
             match device::open(serial.as_deref()) {
                 Ok(mut d) => {
                     log::info!("connected to {}", d.spec().name);
-                    if let Some(b) = brightness
-                        && let Err(e) = d.set_brightness(b)
-                    {
-                        log::warn!("setting brightness: {e}");
+                    let level = if screen_on { brightness } else { Some(0) };
+                    if let Some(level) = level {
+                        set_backlight(d.as_mut(), level);
                     }
-                    set_device(Some(d.spec().name));
+                    let name = d.spec().name;
+                    update(&|s| s.device = Some(name.to_owned()));
                     dev = Some(d);
                 }
                 Err(e) => log::warn!("{e}; retrying in {RECONNECT_DELAY:?}"),
@@ -64,6 +78,8 @@ pub fn run_daemon(
 
         let wait = match dev.as_mut() {
             None => RECONNECT_DELAY,
+            // Dark screen: nothing to draw until it is turned back on.
+            Some(_) if !screen_on => STILL_REFRESH,
             Some(d) => {
                 let started = Instant::now();
                 let spec = d.spec();
@@ -76,7 +92,7 @@ pub fn run_daemon(
                         Err(e) => {
                             log::warn!("lost device: {e}");
                             dev = None;
-                            set_device(None);
+                            update(&|s| s.device = None);
                             RECONNECT_DELAY
                         }
                     },
@@ -109,20 +125,33 @@ pub fn run_daemon(
                 }
                 Command::SetBrightness(percent) => {
                     brightness = Some(percent);
-                    if let Some(d) = dev.as_mut()
-                        && let Err(e) = d.set_brightness(percent)
-                    {
-                        log::warn!("setting brightness: {e}");
+                    // While off, remember it for when the screen comes back.
+                    if screen_on && let Some(d) = dev.as_mut() {
+                        set_backlight(d.as_mut(), percent);
                     }
                 }
-                Command::ScreenToggle => {
-                    if let Some(d) = dev.as_mut()
-                        && let Err(e) = d.screen_toggle()
-                    {
-                        log::warn!("toggling screen: {e}");
+                Command::SetScreen(on) => {
+                    screen_on = on;
+                    update(&|s| s.screen_on = on);
+                    if let Some(d) = dev.as_mut() {
+                        let level = if on {
+                            brightness.unwrap_or(DEFAULT_BRIGHTNESS)
+                        } else {
+                            0
+                        };
+                        set_backlight(d.as_mut(), level);
+                    }
+                    if on {
+                        break;
                     }
                 }
             }
         }
+    }
+}
+
+fn set_backlight(dev: &mut dyn Display, percent: u8) {
+    if let Err(e) = dev.set_brightness(percent) {
+        log::warn!("setting brightness: {e}");
     }
 }

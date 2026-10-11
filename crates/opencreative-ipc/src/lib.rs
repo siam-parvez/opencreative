@@ -32,7 +32,7 @@ mod unsupported;
 pub use unsupported::{Client, Server};
 
 /// Bumped on any incompatible change to [`Request`] or [`Response`].
-pub const PROTOCOL_VERSION: u32 = 1;
+pub const PROTOCOL_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "cmd", rename_all = "snake_case")]
@@ -42,7 +42,7 @@ pub enum Request {
     SetScene { scene: SceneConfig },
     SetBrightness { percent: u8 },
     SetRotation { degrees: u16 },
-    ScreenToggle,
+    SetScreen { on: bool },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -58,6 +58,7 @@ pub enum Response {
 pub struct Status {
     /// Name of the connected device, if any.
     pub device: Option<String>,
+    pub screen_on: bool,
     pub config: Config,
 }
 
@@ -108,6 +109,7 @@ mod tests {
         );
         let status = Response::Status(Status {
             device: Some("LM".into()),
+            screen_on: true,
             config: Config::default(),
         });
         let json = serde_json::to_string(&status).unwrap();

@@ -51,10 +51,8 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// A connected cooler with a screen.
 pub trait Display {
     fn spec(&self) -> &'static ModelSpec;
-    /// Backlight brightness, 0-100.
+    /// Backlight brightness, 0-100. 0 turns the backlight off.
     fn set_brightness(&mut self, percent: u8) -> Result<()>;
-    /// Toggles the screen on/off.
-    fn screen_toggle(&mut self) -> Result<()>;
     /// Shows a full frame of tightly packed RGBA8 pixels at the panel's native size.
     fn send_frame(&mut self, rgba: &[u8]) -> Result<()>;
 }

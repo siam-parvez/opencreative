@@ -29,9 +29,36 @@ pub fn rgba_to_rgb565_le(rgba: &[u8], width: usize) -> Vec<u8> {
     out
 }
 
+/// Expands RGB565 little-endian bytes back to opaque RGBA8, replicating the
+/// high bits into the low ones so full intensity stays 255. Used to preview
+/// exactly what the panel shows.
+pub fn rgb565_le_to_rgba(rgb565: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(rgb565.len() * 2);
+    for bytes in rgb565.as_chunks::<2>().0 {
+        let px = u16::from_le_bytes(*bytes);
+        let r = (px >> 11) as u8;
+        let g = ((px >> 5) & 0x3F) as u8;
+        let b = (px & 0x1F) as u8;
+        out.extend_from_slice(&[
+            (r << 3) | (r >> 2),
+            (g << 2) | (g >> 4),
+            (b << 3) | (b >> 2),
+            255,
+        ]);
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rgb565_round_trip_keeps_exact_colors() {
+        // Values representable in RGB565 come back unchanged.
+        let rgba = [0, 0, 0, 255, 255, 255, 255, 255, 0x10, 0x14, 0x21, 255];
+        assert_eq!(rgb565_le_to_rgba(&rgba_to_rgb565_le(&rgba, 3)), rgba);
+    }
 
     #[test]
     fn primaries() {
