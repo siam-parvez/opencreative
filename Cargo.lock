@@ -2435,7 +2435,7 @@ checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
 name = "opencreative-cli"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2454,7 +2454,7 @@ dependencies = [
 
 [[package]]
 name = "opencreative-config"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "dirs",
  "opencreative-core",
@@ -2467,7 +2467,7 @@ dependencies = [
 
 [[package]]
 name = "opencreative-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "chrono",
  "image",
@@ -2480,7 +2480,7 @@ dependencies = [
 
 [[package]]
 name = "opencreative-daemon"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "log",
@@ -2492,7 +2492,7 @@ dependencies = [
 
 [[package]]
 name = "opencreative-device"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "log",
  "nusb",
@@ -2502,7 +2502,7 @@ dependencies = [
 
 [[package]]
 name = "opencreative-gui"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "chrono",
  "dirs",
@@ -2526,7 +2526,7 @@ dependencies = [
 
 [[package]]
 name = "opencreative-ipc"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "dirs",
  "log",
@@ -2538,14 +2538,14 @@ dependencies = [
 
 [[package]]
 name = "opencreative-protocol"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "thiserror 2.0.21",
 ]
 
 [[package]]
 name = "opencreative-render"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "ab_glyph",
  "image",
@@ -2555,7 +2555,7 @@ dependencies = [
 
 [[package]]
 name = "opencreative-sensors"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "chrono",
  "nvml-wrapper",
