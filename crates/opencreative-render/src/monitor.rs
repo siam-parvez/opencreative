@@ -120,7 +120,15 @@ impl Gauge {
     }
 }
 
-fn arc(pm: &mut Pixmap, cx: f32, cy: f32, r: f32, fraction: f32, width: f32, color: [u8; 3]) {
+pub(crate) fn arc(
+    pm: &mut Pixmap,
+    cx: f32,
+    cy: f32,
+    r: f32,
+    fraction: f32,
+    width: f32,
+    color: [u8; 3],
+) {
     let sweep = ARC_SWEEP * fraction;
     if sweep <= 0.0 {
         return;
@@ -195,7 +203,7 @@ fn status_strip(pm: &mut Pixmap, snap: &Snapshot, clock: &str, w: f32, h: f32) {
     );
 }
 
-fn rgb(c: [u8; 3]) -> Color {
+pub(crate) fn rgb(c: [u8; 3]) -> Color {
     Color::from_rgba8(c[0], c[1], c[2], 255)
 }
 

@@ -24,12 +24,12 @@ use thiserror::Error;
 #[cfg(unix)]
 mod unix;
 #[cfg(unix)]
-pub use unix::{Client, Server};
+pub use unix::{Client, Server, Stopper};
 
 #[cfg(not(unix))]
 mod unsupported;
 #[cfg(not(unix))]
-pub use unsupported::{Client, Server};
+pub use unsupported::{Client, Server, Stopper};
 
 /// Bumped on any incompatible change to [`Request`] or [`Response`].
 pub const PROTOCOL_VERSION: u32 = 2;

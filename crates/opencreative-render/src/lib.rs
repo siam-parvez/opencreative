@@ -5,6 +5,7 @@
 //! the panel's native orientation. Pixmaps are always fully opaque, so their
 //! premultiplied RGBA bytes can be sent to a device as-is.
 
+pub mod icon;
 pub mod media;
 pub mod monitor;
 mod text;

@@ -7,17 +7,51 @@
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex};
-use std::thread;
+use std::thread::{self, JoinHandle};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
 use opencreative_config::{self as config, Config};
 use opencreative_core::{Command, DaemonState, Player, run_daemon};
 use opencreative_ipc::{self as ipc, Request, Response, Status};
 use opencreative_render::Rotation;
 
-/// Runs until the IPC listener fails. Errors early if another daemon is
-/// already running.
+/// Runs the daemon on the calling thread until it stops (normally never).
+/// Errors early if another daemon is already running.
 pub fn run(config_path: Option<PathBuf>) -> Result<()> {
+    spawn(config_path)?.wait()
+}
+
+/// A daemon running on background threads.
+pub struct Daemon {
+    stopper: ipc::Stopper,
+    commands: Sender<Command>,
+    server: JoinHandle<Result<()>>,
+    playback: JoinHandle<()>,
+}
+
+impl Daemon {
+    /// Blocks until the daemon stops.
+    pub fn wait(self) -> Result<()> {
+        join(self.server)?
+    }
+
+    /// Stops serving, releases the device and removes the socket, so another
+    /// daemon (e.g. the system service) can take over.
+    pub fn stop(self) -> Result<()> {
+        self.stopper.stop();
+        let _ = self.commands.send(Command::Shutdown);
+        join(self.playback)?;
+        join(self.server)?
+    }
+}
+
+fn join<T>(handle: JoinHandle<T>) -> Result<T> {
+    handle.join().map_err(|_| anyhow!("daemon thread panicked"))
+}
+
+/// Starts the daemon on background threads. The socket is bound before this
+/// returns, so "already running" and config errors surface here.
+pub fn spawn(config_path: Option<PathBuf>) -> Result<Daemon> {
     let config_path = match config_path {
         Some(path) => path,
         None => config::default_path()?,
@@ -26,17 +60,18 @@ pub fn run(config_path: Option<PathBuf>) -> Result<()> {
     let socket = ipc::default_socket_path();
     // Bind first: if another daemon is running, stop before touching the device.
     let server = ipc::Server::bind(&socket)?;
+    let stopper = server.stopper();
 
     let player = Player::new(config.scene.to_scene()?, config.rotation()?);
     let (commands, receiver) = mpsc::channel();
     let state = Arc::new(Mutex::new(DaemonState::default()));
-    {
+    let playback = {
         let (serial, brightness, state) = (config.serial.clone(), config.brightness, state.clone());
         thread::Builder::new()
             .name("playback".into())
             .spawn(move || run_daemon(player, serial, brightness, receiver, state))
-            .context("starting playback thread")?;
-    }
+            .context("starting playback thread")?
+    };
 
     log::info!(
         "daemon listening on {} (config {})",
@@ -46,11 +81,19 @@ pub fn run(config_path: Option<PathBuf>) -> Result<()> {
     let shared = Shared {
         config: Mutex::new(config),
         config_path,
-        commands,
+        commands: commands.clone(),
         state,
     };
-    server.serve(move |request| shared.handle(request))?;
-    Ok(())
+    let server = thread::Builder::new()
+        .name("ipc".into())
+        .spawn(move || Ok(server.serve(move |request| shared.handle(request))?))
+        .context("starting IPC thread")?;
+    Ok(Daemon {
+        stopper,
+        commands,
+        server,
+        playback,
+    })
 }
 
 struct Shared {

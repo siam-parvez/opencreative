@@ -2,3 +2,4 @@
 *.png
 !assets/**/*.png
 !docs/**/*.png
+!packaging/**/*.png

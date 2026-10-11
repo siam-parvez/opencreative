@@ -83,12 +83,18 @@ cargo install --path crates/opencreative-gui
 opencreative-gui
 ```
 
-Pick the screen (system monitor, image/GIF — drop a file on the window — or a
-color), brightness, rotation and screen on/off, with a live preview of your
-changes before you apply them. "Device-accurate colors" shows the panel's
-16-bit color exactly. The app talks to the daemon; if none is running it
-starts one inside the window, so the screen only keeps updating while the
-window is open — enable the systemd service to avoid that.
+- **Screen**: pick the system monitor, an image/GIF (Browse… or drop a file on
+  the window) or a color, plus brightness, rotation and screen on/off — with a
+  live preview of your changes before you apply them. "Device-accurate colors"
+  shows the panel's 16-bit color exactly.
+- **Sensors**: two-minute history of CPU/GPU temperature, CPU load and RAM, and
+  every temperature sensor found.
+- **Service** (Linux): run OpenCreative in the background at login, install the
+  USB rule (asks for your password), and add OpenCreative to your app menu.
+
+The app talks to the daemon; if none is running it starts one inside the
+window, so the screen only keeps updating while the window is open — the
+Service tab hands it over to a background service.
 
 ### Daemon
 
@@ -132,7 +138,8 @@ New devices implement `Display` in `opencreative-device`; frontends don't change
 ## Roadmap
 
 - [x] Desktop GUI MVP (screen picker, live preview, device settings) — see [plan](docs/design/gui.md)
-- [ ] GUI polish: file picker, sensor history, service page, tray, `.desktop` entry
+- [x] GUI polish: file picker, sensor history, service page, app menu entry + icon
+- [ ] Tray icon (needs GTK3 dev libraries on Linux; the background service covers most of the need)
 - [x] Config file + background daemon with IPC so the GUI and CLI share one device
 - [ ] Daemon on Windows (named pipe)
 - [ ] Theme engine: user-defined layouts (TOML), custom fonts and backgrounds

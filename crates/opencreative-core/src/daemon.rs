@@ -18,6 +18,8 @@ pub enum Command {
     /// Turns the screen on or off. Off is backlight 0 with frames paused:
     /// the protocol has no confirmed "display off" command.
     SetScreen(bool),
+    /// Stops playback and releases the device.
+    Shutdown,
 }
 
 /// What the daemon reports about itself.
@@ -43,7 +45,8 @@ const STILL_REFRESH: Duration = Duration::from_secs(5);
 /// Brightness used when turning the screen back on if none was ever chosen.
 const DEFAULT_BRIGHTNESS: u8 = 100;
 
-/// Keeps `player`'s scene on the device until `commands` is closed. Waits for
+/// Keeps `player`'s scene on the device until [`Command::Shutdown`] arrives or
+/// `commands` is closed. Waits for
 /// a device to appear, reconnects when it disappears, and applies commands as
 /// soon as they arrive. Never gives up on errors: a background service should
 /// recover once the cause (a missing udev rule, an unplugged cooler, a deleted
@@ -115,6 +118,7 @@ pub fn run_daemon(
                 };
             log::info!("command: {command:?}");
             match command {
+                Command::Shutdown => return,
                 Command::SetScene(scene) => {
                     player = Player::new(scene, player.rotation());
                     break;
