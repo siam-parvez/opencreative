@@ -1,0 +1,6 @@
+# OpenCreative: give the logged-in user access to DeepCool LCD coolers.
+# Install: sudo cp 60-opencreative.rules /etc/udev/rules.d/ && sudo udevadm control --reload && sudo udevadm trigger
+# The 60- prefix matters: uaccess tags must be applied before 73-seat-late.rules.
+
+# DeepCool LM series (LM240 / LM360)
+SUBSYSTEM=="usb", ATTRS{idVendor}=="3633", ATTRS{idProduct}=="0026", TAG+="uaccess"

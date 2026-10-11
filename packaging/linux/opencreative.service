@@ -1,0 +1,16 @@
+# systemd *user* service that keeps the system monitor on the cooler screen.
+# Install:
+#   cp opencreative.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now opencreative
+
+[Unit]
+Description=OpenCreative cooler screen
+
+[Service]
+ExecStart=%h/.cargo/bin/opencreative monitor
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

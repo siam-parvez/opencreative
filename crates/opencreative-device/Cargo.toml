@@ -1,0 +1,17 @@
+[package]
+name = "opencreative-device"
+description = "USB transport and device discovery for DeepCool LCD coolers"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+opencreative-protocol.workspace = true
+nusb.workspace = true
+futures-lite.workspace = true
+async-io = "2"
+thiserror.workspace = true
+log.workspace = true

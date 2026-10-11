@@ -1,0 +1,15 @@
+[package]
+name = "opencreative-render"
+description = "Renders screen content (themes, images, GIFs) for DeepCool LCD coolers"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+opencreative-sensors.workspace = true
+tiny-skia.workspace = true
+ab_glyph.workspace = true
+image.workspace = true

@@ -1,0 +1,23 @@
+[package]
+name = "opencreative-cli"
+description = "OpenCreative: open-source control for DeepCool LCD coolers"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "opencreative"
+path = "src/main.rs"
+
+[dependencies]
+opencreative-device.workspace = true
+opencreative-render.workspace = true
+opencreative-sensors.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+chrono.workspace = true
+log.workspace = true
+env_logger.workspace = true

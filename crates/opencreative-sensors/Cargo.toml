@@ -1,0 +1,12 @@
+[package]
+name = "opencreative-sensors"
+description = "Cross-platform hardware sensor readings for OpenCreative screens"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+sysinfo.workspace = true
