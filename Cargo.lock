@@ -639,9 +639,23 @@ dependencies = [
  "clap",
  "env_logger",
  "log",
+ "opencreative-core",
  "opencreative-device",
  "opencreative-render",
  "opencreative-sensors",
+]
+
+[[package]]
+name = "opencreative-core"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "image",
+ "log",
+ "opencreative-device",
+ "opencreative-render",
+ "opencreative-sensors",
+ "thiserror",
 ]
 
 [[package]]

@@ -1,0 +1,18 @@
+[package]
+name = "opencreative-core"
+description = "Scene playback for OpenCreative: what to show and keeping it on the device"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+opencreative-device.workspace = true
+opencreative-render.workspace = true
+opencreative-sensors.workspace = true
+image.workspace = true
+chrono.workspace = true
+thiserror.workspace = true
+log.workspace = true

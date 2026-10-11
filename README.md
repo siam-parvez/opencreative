@@ -82,6 +82,7 @@ crates/
   opencreative-device     USB discovery + transport, `Display` trait per model
   opencreative-sensors    cross-platform sensors via sysinfo
   opencreative-render     tiny-skia drawing: themes, images, GIFs, rotation
+  opencreative-core       scene playback + reconnect loop shared by all frontends
   opencreative-cli        the `opencreative` binary
 ```
 
