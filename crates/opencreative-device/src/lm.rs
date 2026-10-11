@@ -22,16 +22,18 @@ const HANDSHAKE_SETTLE: Duration = Duration::from_millis(500);
 const RGBA_FRAME_BYTES: usize = lm::WIDTH as usize * lm::HEIGHT as usize * 4;
 
 pub struct LmSeries {
-    iface: Interface,
+    ep: usb::BulkOut,
     header: Vec<u8>,
 }
 
 impl LmSeries {
     pub(crate) fn new(iface: Interface) -> Result<Self> {
-        usb::bulk_write(&iface, lm::EP_OUT, &lm::handshake())?;
+        // The endpoint holds the interface open, so `iface` can be dropped.
+        let mut ep = usb::bulk_out(&iface, lm::EP_OUT)?;
+        usb::bulk_write(&mut ep, &lm::handshake())?;
         thread::sleep(HANDSHAKE_SETTLE);
         Ok(Self {
-            iface,
+            ep,
             header: lm::frame_header(lm::FRAME_BYTES),
         })
     }
@@ -43,11 +45,11 @@ impl Display for LmSeries {
     }
 
     fn set_brightness(&mut self, percent: u8) -> Result<()> {
-        usb::bulk_write(&self.iface, lm::EP_OUT, &lm::set_brightness(percent))
+        usb::bulk_write(&mut self.ep, &lm::set_brightness(percent))
     }
 
     fn screen_toggle(&mut self) -> Result<()> {
-        usb::bulk_write(&self.iface, lm::EP_OUT, &lm::screen_toggle())
+        usb::bulk_write(&mut self.ep, &lm::screen_toggle())
     }
 
     fn send_frame(&mut self, rgba: &[u8]) -> Result<()> {
@@ -57,7 +59,7 @@ impl Display for LmSeries {
                 got: rgba.len(),
             });
         }
-        usb::bulk_write(&self.iface, lm::EP_OUT, &self.header)?;
-        usb::bulk_write(&self.iface, lm::EP_OUT, &pixel::rgba_to_rgb565_le(rgba))
+        usb::bulk_write(&mut self.ep, &self.header)?;
+        usb::bulk_write(&mut self.ep, &pixel::rgba_to_rgb565_le(rgba))
     }
 }

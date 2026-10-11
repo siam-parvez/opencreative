@@ -11,7 +11,5 @@ authors.workspace = true
 [dependencies]
 opencreative-protocol.workspace = true
 nusb.workspace = true
-futures-lite.workspace = true
-async-io = "2"
 thiserror.workspace = true
 log.workspace = true

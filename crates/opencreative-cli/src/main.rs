@@ -149,7 +149,7 @@ fn list() -> Result<()> {
     }
     for f in found {
         println!(
-            "{}  {}x{}  bus {:03} addr {:03}  serial {}",
+            "{}  {}x{}  bus {} addr {:03}  serial {}",
             f.spec.name,
             f.spec.width,
             f.spec.height,
