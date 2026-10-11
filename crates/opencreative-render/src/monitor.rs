@@ -4,15 +4,14 @@
 use std::f32::consts::PI;
 
 use opencreative_sensors::Snapshot;
-use tiny_skia::{
-    Color, GradientStop, LineCap, LinearGradient, Paint, PathBuilder, Pixmap, Point, Rect,
-    SpreadMode, Stroke, Transform,
-};
+use tiny_skia::{Color, LineCap, Paint, PathBuilder, Pixmap, Rect, Stroke, Transform};
 
 use crate::text::{self, Align, Weight};
 
-const BG_TOP: [u8; 3] = [0x0b, 0x0f, 0x17];
-const BG_BOTTOM: [u8; 3] = [0x13, 0x1a, 0x2a];
+/// Flat on purpose: a subtle gradient spans only a few RGB565 levels and shows
+/// as horizontal bands on the panel. This value is exact in RGB565 (red/blue
+/// multiples of 8, green of 4), so dithering leaves it untouched.
+const BG: [u8; 3] = [0x10, 0x14, 0x20];
 const TRACK: [u8; 3] = [0x24, 0x2c, 0x3d];
 const TEXT: [u8; 3] = [0xf1, 0xf5, 0xf9];
 const MUTED: [u8; 3] = [0x8b, 0x95, 0xa7];
@@ -29,7 +28,7 @@ const STRIP: f32 = 52.0;
 pub fn render(snap: &Snapshot, clock: &str, width: u32, height: u32) -> Pixmap {
     let mut pm = Pixmap::new(width, height).expect("non-zero size");
     let (w, h) = (width as f32, height as f32);
-    background(&mut pm, w, h);
+    pm.fill(rgb(BG));
 
     let gauge_area = h - STRIP;
     let cells = if w >= h {
@@ -71,30 +70,6 @@ pub fn render(snap: &Snapshot, clock: &str, width: u32, height: u32) -> Pixmap {
 
     status_strip(&mut pm, snap, clock, w, h);
     pm
-}
-
-fn background(pm: &mut Pixmap, w: f32, h: f32) {
-    let shader = LinearGradient::new(
-        Point::from_xy(0.0, 0.0),
-        Point::from_xy(0.0, h),
-        vec![
-            GradientStop::new(0.0, rgb(BG_TOP)),
-            GradientStop::new(1.0, rgb(BG_BOTTOM)),
-        ],
-        SpreadMode::Pad,
-        Transform::identity(),
-    )
-    .expect("valid gradient");
-    let paint = Paint {
-        shader,
-        ..Paint::default()
-    };
-    pm.fill_rect(
-        Rect::from_xywh(0.0, 0.0, w, h).expect("valid rect"),
-        &paint,
-        Transform::identity(),
-        None,
-    );
 }
 
 struct Gauge {
@@ -271,6 +246,11 @@ mod tests {
         assert_eq!(ramp(&stops, -5.0), [0, 0, 0]);
         assert_eq!(ramp(&stops, 5.0), [50, 100, 25]);
         assert_eq!(ramp(&stops, 50.0), [100, 200, 50]);
+    }
+
+    #[test]
+    fn background_is_exact_in_rgb565() {
+        assert_eq!((BG[0] % 8, BG[1] % 4, BG[2] % 8), (0, 0, 0));
     }
 
     #[test]

@@ -60,6 +60,9 @@ impl Display for LmSeries {
             });
         }
         usb::bulk_write(&mut self.ep, &self.header)?;
-        usb::bulk_write(&mut self.ep, &pixel::rgba_to_rgb565_le(rgba))
+        usb::bulk_write(
+            &mut self.ep,
+            &pixel::rgba_to_rgb565_le(rgba, lm::WIDTH as usize),
+        )
     }
 }
