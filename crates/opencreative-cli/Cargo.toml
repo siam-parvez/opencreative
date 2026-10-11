@@ -13,11 +13,14 @@ name = "opencreative"
 path = "src/main.rs"
 
 [dependencies]
+opencreative-config.workspace = true
 opencreative-core.workspace = true
+opencreative-ipc.workspace = true
 opencreative-device.workspace = true
 opencreative-render.workspace = true
 opencreative-sensors.workspace = true
 anyhow.workspace = true
+toml.workspace = true
 clap.workspace = true
 chrono.workspace = true
 log.workspace = true

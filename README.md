@@ -50,7 +50,8 @@ sudo cp packaging/linux/60-opencreative.rules /etc/udev/rules.d/
 sudo udevadm control --reload && sudo udevadm trigger
 ```
 
-Run the monitor on login:
+Run the daemon on login, so the screen is always driven and your choices
+persist across reboots:
 
 ```sh
 mkdir -p ~/.config/systemd/user
@@ -63,7 +64,7 @@ systemctl --user enable --now opencreative
 
 ```sh
 opencreative list                      # find connected coolers
-opencreative monitor                   # live system monitor (Ctrl+C to stop)
+opencreative monitor                   # live system monitor
 opencreative image wallpaper.gif       # still images or looping GIFs
 opencreative image logo.png --fit contain
 opencreative solid '#ff8800'
@@ -72,7 +73,29 @@ opencreative screen-toggle
 opencreative --rotate 180 monitor      # upside-down pump
 opencreative sensors                   # check which temperature sensors were found
 opencreative preview monitor -o out.png
+opencreative status                    # what the daemon is showing
 ```
+
+### Daemon
+
+`opencreative daemon` owns the cooler and keeps the chosen screen on it,
+reconnecting after replugs and suspend/resume. While it runs, the commands
+above are sent to it instead of opening the USB device (only one program can
+hold it at a time), and every change is saved to
+`~/.config/opencreative/config.toml`:
+
+```toml
+rotation = 0
+brightness = 60
+
+[scene]
+type = "monitor"        # or "image" (path, fit) / "solid" (color = "#ff8800")
+interval_secs = 1.0
+```
+
+Without a daemon, commands drive the device directly; `--no-daemon` forces
+that. The daemon is Linux/macOS only for now (Unix socket at
+`$XDG_RUNTIME_DIR/opencreative.sock`); on Windows commands always run directly.
 
 ## Architecture
 
@@ -82,16 +105,19 @@ crates/
   opencreative-device     USB discovery + transport, `Display` trait per model
   opencreative-sensors    cross-platform sensors via sysinfo
   opencreative-render     tiny-skia drawing: themes, images, GIFs, rotation
-  opencreative-core       scene playback + reconnect loop shared by all frontends
-  opencreative-cli        the `opencreative` binary
+  opencreative-core       scene playback, reconnect loop, daemon engine
+  opencreative-config     TOML settings
+  opencreative-ipc        JSON-lines protocol between the daemon and its clients
+  opencreative-cli        the `opencreative` binary (CLI + `daemon`)
 ```
 
 New devices implement `Display` in `opencreative-device`; frontends don't change.
 
 ## Roadmap
 
-- [ ] Desktop GUI (theme picker, live preview, device settings)
-- [ ] Config file + background daemon with IPC so the GUI and CLI share one device
+- [ ] Desktop GUI (theme picker, live preview, device settings) — see [plan](docs/design/gui.md)
+- [x] Config file + background daemon with IPC so the GUI and CLI share one device
+- [ ] Daemon on Windows (named pipe)
 - [ ] Theme engine: user-defined layouts (TOML), custom fonts and backgrounds
 - [ ] More sensors: NVIDIA GPU (NVML), fan/pump RPM, network, disk
 - [ ] Windows (WinUSB) and macOS builds, CI release artifacts
