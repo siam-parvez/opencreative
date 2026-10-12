@@ -19,6 +19,7 @@ use std::time::Duration;
 use opencreative_core::Scene;
 use opencreative_render::Rotation;
 use opencreative_render::media::{Crop, Fit, Item, Source};
+use opencreative_render::music::{self, BarStyle};
 use opencreative_render::panels::{Layout, Skin};
 pub use opencreative_sensors::Metric;
 use serde::{Deserialize, Serialize};
@@ -117,6 +118,58 @@ pub enum SceneConfig {
     Solid {
         color: Rgb,
     },
+    /// Bars that move with the music the computer is playing.
+    Music {
+        #[serde(default)]
+        style: BarStyleConfig,
+        #[serde(default = "default_music_color")]
+        color: Rgb,
+        /// Color each bar by its pitch instead of `color`.
+        #[serde(default)]
+        rainbow: bool,
+        #[serde(default = "default_bars")]
+        bars: u8,
+    },
+}
+
+fn default_music_color() -> Rgb {
+    Rgb([0x22, 0xd3, 0xee])
+}
+
+fn default_bars() -> u8 {
+    24
+}
+
+/// How music bars are laid out.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BarStyleConfig {
+    /// Rising from the bottom.
+    #[default]
+    Bars,
+    /// Growing up and down from the middle.
+    Mirror,
+}
+
+impl From<BarStyleConfig> for BarStyle {
+    fn from(s: BarStyleConfig) -> Self {
+        match s {
+            BarStyleConfig::Bars => BarStyle::Bars,
+            BarStyleConfig::Mirror => BarStyle::Mirror,
+        }
+    }
+}
+
+impl SceneConfig {
+    /// The default Music scene.
+    pub fn music() -> Self {
+        Self::Music {
+            style: BarStyleConfig::default(),
+            color: default_music_color(),
+            rainbow: false,
+            bars: default_bars(),
+        }
+    }
 }
 
 fn default_interval() -> f64 {
@@ -276,6 +329,19 @@ impl SceneConfig {
                 item_time: interval(*item_secs)?,
             },
             Self::Solid { color } => Scene::Solid(color.0),
+            Self::Music {
+                style,
+                color,
+                rainbow,
+                bars,
+            } => Scene::Music {
+                look: music::Look {
+                    style: (*style).into(),
+                    color: color.0,
+                    rainbow: *rainbow,
+                },
+                bars: (*bars).clamp(4, 64) as usize,
+            },
         })
     }
 }

@@ -4,6 +4,7 @@ members = [
     "crates/opencreative-protocol",
     "crates/opencreative-device",
     "crates/opencreative-sensors",
+    "crates/opencreative-audio",
     "crates/opencreative-render",
     "crates/opencreative-core",
     "crates/opencreative-config",
@@ -25,6 +26,7 @@ authors = ["OpenCreative contributors"]
 opencreative-protocol = { path = "crates/opencreative-protocol" }
 opencreative-device = { path = "crates/opencreative-device" }
 opencreative-sensors = { path = "crates/opencreative-sensors" }
+opencreative-audio = { path = "crates/opencreative-audio" }
 opencreative-render = { path = "crates/opencreative-render" }
 opencreative-core = { path = "crates/opencreative-core" }
 opencreative-config = { path = "crates/opencreative-config" }

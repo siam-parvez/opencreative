@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 use opencreative_device::{self as device, Display};
 use opencreative_render::media::{self, Item, Source};
 use opencreative_render::video::{self, Stream};
-use opencreative_render::{Pixmap, Rotation, monitor, panels, rotate, solid, zen};
+use opencreative_render::{Pixmap, Rotation, monitor, music, panels, rotate, solid, zen};
 use opencreative_sensors::Sensors;
 use thiserror::Error;
 
@@ -59,6 +59,11 @@ pub enum Scene {
         item_time: Duration,
     },
     Solid([u8; 3]),
+    /// Bars that move with what the computer is playing.
+    Music {
+        look: music::Look,
+        bars: usize,
+    },
     /// A calm screen with a dim clock (Zen mode).
     Zen,
 }
@@ -67,7 +72,7 @@ impl Scene {
     /// Whether playback should wait for a device that isn't plugged in yet
     /// (a background monitor) rather than fail right away (a one-off command).
     fn waits_for_device(&self) -> bool {
-        self.is_live()
+        self.is_live() || matches!(self, Self::Music { .. })
     }
 
     /// Whether the scene shows sensor readings.
@@ -112,7 +117,20 @@ pub struct Player {
     history: VecDeque<opencreative_sensors::Snapshot>,
     /// Whether this player turned Claude usage polling on.
     claude_on: bool,
+    /// Recording what's playing, for the Music scene.
+    audio: Option<Audio>,
 }
+
+/// The Music scene's recorder, or why there isn't one (retried now and
+/// then, e.g. until the sound server is up after login).
+enum Audio {
+    Recording(opencreative_audio::Spectrum),
+    Failed { why: String, at: Instant },
+}
+
+/// The Music scene's frame rate.
+const MUSIC_FRAME: Duration = Duration::from_millis(33);
+const AUDIO_RETRY: Duration = Duration::from_secs(5);
 
 /// How many readings a chart covers (a minute at the default rate).
 const HISTORY: usize = 60;
@@ -127,6 +145,7 @@ impl Player {
             media: None,
             history: VecDeque::with_capacity(HISTORY),
             claude_on: false,
+            audio: None,
         }
     }
 
@@ -198,6 +217,60 @@ impl Player {
                 let (items, item_time) = (items.clone(), *item_time);
                 self.next_media(&items, item_time, (w, h))
             }
+            Scene::Music { look, bars } => {
+                let (look, bars) = (*look, *bars);
+                let (bands, message) = self.listen(bars);
+                let frame =
+                    music::render(&bands.levels, &bands.peaks, &look, message.as_deref(), w, h);
+                Ok(Output {
+                    frame: rotate(&frame, self.rotation),
+                    hold: Some(MUSIC_FRAME),
+                })
+            }
+        }
+    }
+
+    /// The current spectrum, starting the recorder if needed; when it can't
+    /// record, flat bars and a short note why.
+    fn listen(&mut self, bars: usize) -> (opencreative_audio::Bands, Option<String>) {
+        let flat = || opencreative_audio::Bands {
+            levels: vec![0.0; bars],
+            peaks: vec![0.0; bars],
+        };
+        let retry = match &self.audio {
+            None => true,
+            Some(Audio::Failed { at, .. }) => at.elapsed() >= AUDIO_RETRY,
+            Some(Audio::Recording(_)) => false,
+        };
+        if retry {
+            self.audio = Some(match opencreative_audio::Spectrum::start() {
+                Ok(spectrum) => Audio::Recording(spectrum),
+                Err(e) => {
+                    log::warn!("music bars: {e}");
+                    Audio::Failed {
+                        why: e.to_string(),
+                        at: Instant::now(),
+                    }
+                }
+            });
+        }
+        match &mut self.audio {
+            Some(Audio::Recording(spectrum)) => match spectrum.bands(bars) {
+                Ok(bands) => (bands, None),
+                Err(e) => {
+                    log::warn!("music bars: {e}");
+                    self.audio = Some(Audio::Failed {
+                        why: e.to_string(),
+                        at: Instant::now(),
+                    });
+                    (flat(), Some("NO AUDIO".to_owned()))
+                }
+            },
+            Some(Audio::Failed { why, .. }) => {
+                log::debug!("music bars: {why}");
+                (flat(), Some("NO AUDIO".to_owned()))
+            }
+            None => (flat(), None),
         }
     }
 

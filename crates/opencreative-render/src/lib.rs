@@ -8,6 +8,7 @@
 pub mod icon;
 pub mod media;
 pub mod monitor;
+pub mod music;
 pub mod panels;
 mod shapes;
 mod text;
