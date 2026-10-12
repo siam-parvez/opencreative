@@ -103,56 +103,136 @@ pub fn numeric(size: f32) -> FontId {
     FontId::new(size, FontFamily::Name(NUMERIC.into()))
 }
 
-/// Installs fonts, text sizes and both light and dark visuals.
-pub fn install(ctx: &egui::Context) {
-    let mut fonts = FontDefinitions::default();
-    let faces: [(&str, &'static [u8]); 4] = [
-        (
-            NUMERIC,
-            include_bytes!("../../../assets/fonts/Orbitron.ttf"),
-        ),
-        (
-            "plex",
-            include_bytes!("../../../assets/fonts/IBMPlexSans-Regular.ttf"),
-        ),
-        (
-            MEDIUM,
-            include_bytes!("../../../assets/fonts/IBMPlexSans-Medium.ttf"),
-        ),
-        (
-            SEMIBOLD,
-            include_bytes!("../../../assets/fonts/IBMPlexSans-SemiBold.ttf"),
-        ),
+/// The typeface of the app itself (the cooler screen keeps its own fonts).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AppFont {
+    /// Made for screens: clear at small sizes.
+    #[default]
+    Inter,
+    /// Geometric and crisp, from Vercel.
+    Geist,
+    /// Rounded and friendly.
+    Manrope,
+    /// IBM Plex Sans, the original look.
+    Plex,
+}
+
+impl AppFont {
+    pub const ALL: [AppFont; 4] = [
+        AppFont::Inter,
+        AppFont::Geist,
+        AppFont::Manrope,
+        AppFont::Plex,
     ];
-    for (name, bytes) in faces {
-        fonts
-            .font_data
-            .insert(name.to_owned(), Arc::new(FontData::from_static(bytes)));
+
+    pub fn name(self) -> &'static str {
+        match self {
+            AppFont::Inter => "Inter",
+            AppFont::Geist => "Geist",
+            AppFont::Manrope => "Manrope",
+            AppFont::Plex => "IBM Plex Sans",
+        }
     }
-    // Keep egui's fonts as fallbacks for symbols Plex lacks.
+
+    /// Regular, medium and semibold.
+    fn faces(self) -> [&'static [u8]; 3] {
+        match self {
+            AppFont::Inter => [
+                include_bytes!("../../../assets/fonts/Inter-Regular.ttf"),
+                include_bytes!("../../../assets/fonts/Inter-Medium.ttf"),
+                include_bytes!("../../../assets/fonts/Inter-SemiBold.ttf"),
+            ],
+            AppFont::Geist => [
+                include_bytes!("../../../assets/fonts/Geist-Regular.ttf"),
+                include_bytes!("../../../assets/fonts/Geist-Medium.ttf"),
+                include_bytes!("../../../assets/fonts/Geist-SemiBold.ttf"),
+            ],
+            AppFont::Manrope => [
+                include_bytes!("../../../assets/fonts/Manrope-Regular.ttf"),
+                include_bytes!("../../../assets/fonts/Manrope-Medium.ttf"),
+                include_bytes!("../../../assets/fonts/Manrope-SemiBold.ttf"),
+            ],
+            AppFont::Plex => [
+                include_bytes!("../../../assets/fonts/IBMPlexSans-Regular.ttf"),
+                include_bytes!("../../../assets/fonts/IBMPlexSans-Medium.ttf"),
+                include_bytes!("../../../assets/fonts/IBMPlexSans-SemiBold.ttf"),
+            ],
+        }
+    }
+
+    fn key(self) -> &'static str {
+        match self {
+            AppFont::Inter => "inter",
+            AppFont::Geist => "geist",
+            AppFont::Manrope => "manrope",
+            AppFont::Plex => "plex",
+        }
+    }
+
+    /// This font at `size` whatever the app's font is, for showing the
+    /// choices in their own faces.
+    pub fn sample(self, size: f32) -> FontId {
+        FontId::new(size, FontFamily::Name(self.key().into()))
+    }
+}
+
+/// Uses `font` for all of the app's text. Every choice stays loaded, so
+/// the picker can show each in its own face.
+pub fn set_app_font(ctx: &egui::Context, font: AppFont) {
+    let mut fonts = FontDefinitions::default();
+    // egui's own fonts stay as fallbacks for symbols ours lack.
     let fallbacks = fonts
         .families
         .get(&FontFamily::Proportional)
         .cloned()
         .unwrap_or_default();
-    let family = |first: &str| {
-        let mut list = vec![first.to_owned()];
+    let family = |first: String| {
+        let mut list = vec![first];
         list.extend(fallbacks.iter().cloned());
         list
     };
+    let mut add = |name: String, bytes: &'static [u8]| {
+        fonts
+            .font_data
+            .insert(name, Arc::new(FontData::from_static(bytes)));
+    };
+    add(
+        NUMERIC.to_owned(),
+        include_bytes!("../../../assets/fonts/Orbitron.ttf"),
+    );
+    for choice in AppFont::ALL {
+        for (weight, bytes) in ["regular", "medium", "semibold"].iter().zip(choice.faces()) {
+            add(format!("{}-{weight}", choice.key()), bytes);
+        }
+    }
+    for choice in AppFont::ALL {
+        fonts.families.insert(
+            FontFamily::Name(choice.key().into()),
+            family(format!("{}-medium", choice.key())),
+        );
+    }
+    let key = font.key();
     fonts
         .families
-        .insert(FontFamily::Proportional, family("plex"));
+        .insert(FontFamily::Proportional, family(format!("{key}-regular")));
+    fonts.families.insert(
+        FontFamily::Name(MEDIUM.into()),
+        family(format!("{key}-medium")),
+    );
+    fonts.families.insert(
+        FontFamily::Name(SEMIBOLD.into()),
+        family(format!("{key}-semibold")),
+    );
     fonts
         .families
-        .insert(FontFamily::Name(MEDIUM.into()), family(MEDIUM));
-    fonts
-        .families
-        .insert(FontFamily::Name(SEMIBOLD.into()), family(SEMIBOLD));
-    fonts
-        .families
-        .insert(FontFamily::Name(NUMERIC.into()), family(NUMERIC));
+        .insert(FontFamily::Name(NUMERIC.into()), family(NUMERIC.to_owned()));
     ctx.set_fonts(fonts);
+}
+
+/// Installs fonts, text sizes and both light and dark visuals.
+pub fn install(ctx: &egui::Context, font: AppFont) {
+    set_app_font(ctx, font);
 
     for (theme, palette) in [(Theme::Light, LIGHT), (Theme::Dark, DARK)] {
         ctx.set_visuals_of(theme, visuals(&palette, theme == Theme::Dark));
