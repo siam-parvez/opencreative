@@ -12,6 +12,7 @@ authors.workspace = true
 opencreative-config.workspace = true
 opencreative-core.workspace = true
 opencreative-ipc.workspace = true
+opencreative-protocol.workspace = true
 opencreative-render.workspace = true
 anyhow.workspace = true
 log.workspace = true

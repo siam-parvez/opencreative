@@ -121,7 +121,11 @@ impl SensorHistory {
         let (rect, _) = ui.allocate_exact_size(vec2(width, CHART_HEIGHT), Sense::hover());
         let painter = ui.painter_at(rect);
         let visuals = ui.visuals();
-        painter.rect_filled(rect, 6.0, visuals.extreme_bg_color);
+        painter.rect_filled(
+            rect,
+            crate::theme::SMALL_RADIUS as f32,
+            visuals.extreme_bg_color,
+        );
 
         let plot = rect.shrink2(vec2(28.0, 10.0)).translate(vec2(12.0, 0.0));
         let y_of = |v: f32| plot.bottom() - v.clamp(0.0, 100.0) / 100.0 * plot.height();

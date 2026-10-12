@@ -6,7 +6,7 @@
 
 mod daemon;
 
-pub use daemon::{Command, DaemonState, run_daemon};
+pub use daemon::{Command, DaemonState, SentFrame, run_daemon};
 
 use std::collections::VecDeque;
 use std::path::PathBuf;

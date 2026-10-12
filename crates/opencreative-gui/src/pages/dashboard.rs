@@ -49,7 +49,8 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
 
 /// Cards side by side, all as tall as the tallest one, wrapping onto more
 /// rows when a card would be narrower than `min_width`. Heights are measured
-/// each frame and applied on the next, which settles immediately.
+/// each frame and applied on the next; a frame whose heights were off is
+/// redrawn before it's shown, so cards never visibly jump.
 fn card_row(ui: &mut egui::Ui, id: &str, n: usize, mut add: impl FnMut(usize, &mut egui::Ui)) {
     let min_width = if n == 2 { 420.0 } else { 260.0 };
     let gap = ui.spacing().item_spacing.x;
@@ -73,7 +74,7 @@ fn card_row(ui: &mut egui::Ui, id: &str, n: usize, mut add: impl FnMut(usize, &m
         });
         if (tallest - target).abs() > 0.5 {
             ui.ctx().data_mut(|d| d.insert_temp(key, tallest));
-            ui.ctx().request_repaint();
+            ui.ctx().request_discard("card heights changed");
         }
         first += count;
         if first < n {
@@ -205,6 +206,7 @@ fn storage(ui: &mut egui::Ui, s: &Snapshot) {
     card_title(ui, Icon::Storage, "Storage", None);
     ui.horizontal_wrapped(|ui| {
         rate_chip(ui, Icon::Up, &rate(s.disk_read_bps), "read");
+        ui.add_space(8.0);
         rate_chip(ui, Icon::Down, &rate(s.disk_write_bps), "write");
     });
     ui.add_space(6.0);
@@ -247,6 +249,7 @@ fn network(ui: &mut egui::Ui, s: &Snapshot, samples: &[Snapshot]) {
     card_title(ui, Icon::Network, "Network", None);
     ui.horizontal_wrapped(|ui| {
         rate_chip(ui, Icon::Up, &rate(s.net_tx_bps), "up");
+        ui.add_space(8.0);
         rate_chip(ui, Icon::Down, &rate(s.net_rx_bps), "down");
     });
     let peak = samples
@@ -339,7 +342,8 @@ fn stat_grid(ui: &mut egui::Ui, id: &str, stats: &[(String, &str)]) {
         });
 }
 
-/// An arrow icon, a bold rate and a muted word.
+/// An arrow icon, a bold rate and a muted word. No space after it: at the
+/// end of a row that would widen the card as the numbers grow.
 fn rate_chip(ui: &mut egui::Ui, icon: Icon, value: &str, what: &str) {
     let p = Palette::of(ui.ctx());
     icons::show(ui, icon, 16.0, p.faint);
@@ -349,7 +353,6 @@ fn rate_chip(ui: &mut egui::Ui, icon: Icon, value: &str, what: &str) {
             .color(p.text),
     );
     ui.label(egui::RichText::new(what).color(p.muted));
-    ui.add_space(8.0);
 }
 
 fn series(samples: &[Snapshot], f: impl Fn(&Snapshot) -> Option<f32>) -> Vec<Option<f32>> {

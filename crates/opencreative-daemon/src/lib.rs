@@ -116,6 +116,18 @@ impl Shared {
                     config: config.clone(),
                 });
             }
+            Request::Frame { after } => {
+                let frame = self.state.lock().expect("state lock").frame.clone();
+                return Response::Frame {
+                    frame: frame.filter(|f| f.seq != after).map(|f| {
+                        let rgb565 = opencreative_protocol::pixel::rgba_to_rgb565_le(
+                            &f.rgba,
+                            f.width as usize,
+                        );
+                        ipc::Frame::new(f.seq, f.width, f.height, f.rotation.degrees(), &rgb565)
+                    }),
+                };
+            }
             Request::SetScene { scene } => match scene.to_scene() {
                 Ok(parsed) => {
                     config.scene = scene;

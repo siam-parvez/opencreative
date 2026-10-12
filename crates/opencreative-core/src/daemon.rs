@@ -31,6 +31,21 @@ pub struct DaemonState {
     pub device: Option<String>,
     pub screen_on: bool,
     pub zen: bool,
+    /// The frame on the screen now, for previews; `None` while nothing is
+    /// shown (no device, or the screen is off).
+    pub frame: Option<SentFrame>,
+}
+
+/// A frame as sent to the device: panel orientation, RGBA.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SentFrame {
+    /// Counts up with every frame sent.
+    pub seq: u64,
+    pub width: u32,
+    pub height: u32,
+    /// How the content was rotated to fit the panel.
+    pub rotation: Rotation,
+    pub rgba: Arc<Vec<u8>>,
 }
 
 impl Default for DaemonState {
@@ -39,6 +54,7 @@ impl Default for DaemonState {
             device: None,
             screen_on: true,
             zen: false,
+            frame: None,
         }
     }
 }
@@ -88,21 +104,39 @@ pub fn run_daemon(
         let wait = match dev.as_mut() {
             None => RECONNECT_DELAY,
             // Dark screen: nothing to draw until it is turned back on.
-            Some(_) if !screen_on => STILL_REFRESH,
+            Some(_) if !screen_on => {
+                update(&|s| s.frame = None);
+                STILL_REFRESH
+            }
             Some(d) => {
                 let started = Instant::now();
                 let spec = d.spec();
                 let active = zen.as_mut().unwrap_or(&mut player);
                 match active.next(spec.width, spec.height) {
                     Ok(out) => match d.send_frame(out.frame.data()) {
-                        Ok(()) => out
-                            .hold
-                            .unwrap_or(STILL_REFRESH)
-                            .saturating_sub(started.elapsed()),
+                        Ok(()) => {
+                            let rgba = Arc::new(out.frame.data().to_vec());
+                            let rotation = active.rotation();
+                            update(&|s| {
+                                s.frame = Some(SentFrame {
+                                    seq: s.frame.as_ref().map_or(1, |f| f.seq + 1),
+                                    width: spec.width,
+                                    height: spec.height,
+                                    rotation,
+                                    rgba: Arc::clone(&rgba),
+                                });
+                            });
+                            out.hold
+                                .unwrap_or(STILL_REFRESH)
+                                .saturating_sub(started.elapsed())
+                        }
                         Err(e) => {
                             log::warn!("lost device: {e}");
                             dev = None;
-                            update(&|s| s.device = None);
+                            update(&|s| {
+                                s.device = None;
+                                s.frame = None;
+                            });
                             RECONNECT_DELAY
                         }
                     },

@@ -28,6 +28,24 @@ pub enum Rotation {
 }
 
 impl Rotation {
+    pub fn degrees(self) -> u16 {
+        match self {
+            Self::R0 => 0,
+            Self::R90 => 90,
+            Self::R180 => 180,
+            Self::R270 => 270,
+        }
+    }
+
+    /// The rotation that undoes this one.
+    pub fn inverse(self) -> Self {
+        match self {
+            Self::R90 => Self::R270,
+            Self::R270 => Self::R90,
+            other => other,
+        }
+    }
+
     pub fn from_degrees(deg: u16) -> Option<Self> {
         match deg {
             0 => Some(Self::R0),
@@ -74,6 +92,20 @@ pub fn rotate(src: &Pixmap, rotation: Rotation) -> Pixmap {
     dst
 }
 
+/// Undoes [`rotate`] on raw RGBA pixels (as sent to a panel): returns
+/// the upright pixels and their width and height.
+pub fn upright(rgba: &[u8], width: u32, height: u32, rotation: Rotation) -> (Vec<u8>, u32, u32) {
+    let size = tiny_skia::IntSize::from_wh(width, height);
+    match size.and_then(|size| Pixmap::from_vec(rgba.to_vec(), size)) {
+        Some(panel) => {
+            let up = rotate(&panel, rotation.inverse());
+            let (w, h) = (up.width(), up.height());
+            (up.take(), w, h)
+        }
+        None => (rgba.to_vec(), width, height),
+    }
+}
+
 /// A single solid color.
 pub fn solid(width: u32, height: u32, rgb: [u8; 3]) -> Pixmap {
     let mut pm = Pixmap::new(width, height).expect("non-zero size");
@@ -84,6 +116,17 @@ pub fn solid(width: u32, height: u32, rgb: [u8; 3]) -> Pixmap {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn upright_undoes_every_rotation() {
+        for deg in [0, 90, 180, 270] {
+            let rotation = Rotation::from_degrees(deg).unwrap();
+            let panel = rotate(&strip(), rotation);
+            let (rgba, w, h) = upright(panel.data(), panel.width(), panel.height(), rotation);
+            assert_eq!((w, h), (2, 1), "{deg}");
+            assert_eq!(rgba, strip().data(), "{deg}");
+        }
+    }
 
     /// 2x1 image: red, green.
     fn strip() -> Pixmap {
