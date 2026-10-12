@@ -152,7 +152,7 @@ pub struct DeviceRow {
 pub struct Preview {
     player: Option<Player>,
     /// What `player` was built from; rebuilt when any of it changes.
-    key: Option<(SceneConfig, u16, bool)>,
+    key: Option<(SceneConfig, u16, bool, opencreative_config::ScreenTheme)>,
     pub texture: Option<egui::TextureHandle>,
     pub size: (u32, u32),
     /// The shown frame's pixels, upright, in the panel's colors.
@@ -631,6 +631,12 @@ impl App {
         }
     }
 
+    pub fn set_screen_theme(&mut self, theme: opencreative_config::ScreenTheme) {
+        if theme != self.applied.screen_theme && self.send(Request::SetScreenTheme { theme }) {
+            self.applied.screen_theme = theme;
+        }
+    }
+
     pub fn set_zen(&mut self, on: bool) {
         if self.send(Request::SetZen { on }) {
             self.zen = on;
@@ -965,7 +971,12 @@ impl App {
             .draft_scene
             .clone()
             .unwrap_or_else(|| self.applied.scene.clone());
-        let key = (scene, self.applied.rotation, self.zen);
+        let key = (
+            scene,
+            self.applied.rotation,
+            self.zen,
+            self.applied.screen_theme,
+        );
         let rotation = Rotation::from_degrees(self.applied.rotation).unwrap_or_default();
         let spec = &opencreative_device::SUPPORTED[0];
         // Upright, as it looks on the mounted pump.
@@ -980,7 +991,7 @@ impl App {
             p.player = match scene {
                 Ok(scene) => {
                     p.error = None;
-                    Some(Player::new(scene, Rotation::R0))
+                    Some(Player::new(scene, Rotation::R0).with_shade(key.3.into()))
                 }
                 Err(e) => {
                     p.error = Some(e.to_string());
