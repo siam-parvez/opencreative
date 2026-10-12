@@ -337,13 +337,21 @@ pub struct App {
 
 impl App {
     fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        theme::install(&cc.egui_ctx);
+        let mut prefs = prefs::load();
+        // For screenshots: try a font without saving the choice.
+        if let Ok(name) = std::env::var("OPENCREATIVE_FONT")
+            && let Some(font) = theme::AppFont::ALL.into_iter().find(|f| {
+                f.name().eq_ignore_ascii_case(&name) || format!("{f:?}").eq_ignore_ascii_case(&name)
+            })
+        {
+            prefs.app_font = font;
+        }
+        theme::install(&cc.egui_ctx, prefs.app_font);
         // A page's first frame may need redrawing twice before it's shown
         // (new page, then card heights); it never flashes half laid out.
         cc.egui_ctx
             .options_mut(|o| o.max_passes = std::num::NonZeroUsize::new(3).expect("non-zero"));
         egui_extras::install_image_loaders(&cc.egui_ctx);
-        let mut prefs = prefs::load();
         // For screenshots: show the integration without saving the choice.
         if std::env::var_os("OPENCREATIVE_CLAUDE").is_some() {
             prefs.claude_usage = true;
