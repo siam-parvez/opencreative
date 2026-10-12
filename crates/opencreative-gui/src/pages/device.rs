@@ -1060,7 +1060,8 @@ fn add_url_row(app: &mut App, ui: &mut egui::Ui) {
             .add_enabled(valid, egui::Button::new("Add link"))
             .clicked();
         if valid && (clicked || enter) {
-            app.add_url(url);
+            let ctx = ui.ctx().clone();
+            app.add_url(&ctx, url);
             app.url_input.clear();
         }
     });
