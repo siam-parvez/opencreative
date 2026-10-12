@@ -5,3 +5,5 @@ if command -v udevadm >/dev/null 2>&1; then
     udevadm control --reload || true
     udevadm trigger --subsystem-match=usb --attr-match=idVendor=3633 || true
 fi
+# Upgrades: restart running OpenCreative services on the new version.
+sh /usr/share/opencreative/restart-user-services.sh || true
