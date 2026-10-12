@@ -6,7 +6,7 @@ use crate::icons::{self, Icon};
 use crate::pages::header;
 use crate::prefs::{Finish, Model};
 use crate::theme::{self, Palette};
-use crate::widgets::{chip, primary_button, segmented};
+use crate::widgets::{arrow_link, chip, segmented};
 use crate::{App, Page};
 
 /// A product picture, its aspect ratio, and where the pump's screen sits in
@@ -87,7 +87,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         let connected = app.device.as_deref() == Some(name);
         theme::card(ui, |ui| {
             // Picture beside the details when there's room, above them when not.
-            const DETAILS_W: f32 = 300.0;
+            const DETAILS_W: f32 = 340.0;
             const GAP: f32 = 24.0;
             let available = ui.available_width();
             let side_by_side = available >= 360.0 + GAP + DETAILS_W;
@@ -140,8 +140,8 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                         app.save_prefs();
                     }
                 });
-                ui.add_space(14.0);
-                if primary_button(ui, "Customize screen").clicked() {
+                ui.add_space(10.0);
+                if arrow_link(ui, "Customize screen").clicked() {
                     app.page = Page::Device;
                 }
             };
