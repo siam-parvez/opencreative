@@ -25,7 +25,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use eframe::egui::{self, Align2, Color32, Frame, Margin, Sense, Stroke, pos2, vec2};
-use opencreative_config::{Config, MediaItem, Rgb, SceneConfig};
+use opencreative_config::{Config, MediaItem, Rgb, SceneConfig, SceneKind};
 use opencreative_core::Player;
 use opencreative_daemon::Daemon;
 use opencreative_ipc::{self as ipc, Request, Response};
@@ -49,6 +49,10 @@ const TOAST_FOR: Duration = Duration::from_secs(4);
 /// How long each playlist item shows when there are several, by default.
 pub const DEFAULT_ITEM_SECS: f64 = 10.0;
 const SIDEBAR_WIDTH: f32 = 212.0;
+/// The sidebar on smaller windows: icons only.
+const SIDEBAR_FOLDED: f32 = 64.0;
+/// Windows narrower than this fold the sidebar.
+const FOLD_BELOW: f32 = 1200.0;
 const TITLE_HEIGHT: f32 = 40.0;
 
 fn main() -> eframe::Result {
@@ -306,6 +310,10 @@ pub struct App {
     /// The Multimedia page's source tab: a kind of media, or `None` for a
     /// plain color.
     pub media_tab: Option<MediaKind>,
+    /// The cooler screen page's Customize panel is open.
+    pub customize_open: bool,
+    /// How far the sidebar has folded to icons only: 0 open, 1 folded.
+    sidebar_fold: f32,
     /// The playlist item the crop controls and preview dragging apply to.
     pub selected_item: usize,
     /// Items picked for removal together (Ctrl/Shift-click); includes
@@ -401,6 +409,8 @@ impl App {
             music_scene: SceneConfig::music(),
             draft_scene: None,
             media_tab: None,
+            customize_open: true,
+            sidebar_fold: 0.0,
             selected_item: 0,
             selection: BTreeSet::new(),
             draft_touched: Instant::now(),
@@ -478,6 +488,32 @@ impl App {
             Ok(Response::Status(status)) => {
                 if !self.synced || Some(self.brightness) == self.applied.brightness {
                     self.brightness = status.config.brightness.unwrap_or(100);
+                }
+                if !self.synced {
+                    // The other modes as they were last left.
+                    let recent = &status.config.recent;
+                    let current = status.config.scene.kind();
+                    if let Some(scene) = recent
+                        .digital
+                        .as_ref()
+                        .filter(|_| current != SceneKind::Digital)
+                    {
+                        self.digital_scene = scene.clone();
+                    }
+                    if let Some(scene) = recent
+                        .music
+                        .as_ref()
+                        .filter(|_| current != SceneKind::Music)
+                    {
+                        self.music_scene = scene.clone();
+                    }
+                    if let Some(scene) = recent
+                        .media
+                        .as_ref()
+                        .filter(|_| current != SceneKind::Media)
+                    {
+                        self.media_scene = scene.clone();
+                    }
                 }
                 if is_digital(&status.config.scene) {
                     self.digital_scene = status.config.scene.clone();
@@ -629,6 +665,13 @@ impl App {
         if degrees != self.applied.rotation && self.send(Request::SetRotation { degrees }) {
             self.applied.rotation = degrees;
         }
+    }
+
+    /// Multiplies the screen preview by the backlight level, so turning the
+    /// brightness down dims it here too.
+    pub fn preview_tint(&self) -> Color32 {
+        let level = f32::from(self.brightness.min(100)) / 100.0;
+        Color32::from_gray((255.0 * (0.06 + 0.94 * level)).round() as u8)
     }
 
     pub fn set_screen_theme(&mut self, theme: opencreative_config::ScreenTheme) {
@@ -1180,7 +1223,7 @@ impl App {
             ui.add_space(12.0);
             self.nav_item(ui, &p, Page::Settings, Icon::Settings, "Settings");
             ui.add_space(8.0);
-            if let Some(device) = self.device.clone() {
+            if let Some(device) = self.device.clone().filter(|_| self.sidebar_fold == 0.0) {
                 let device = self.device_title(&device).to_owned();
                 ui.horizontal(|ui| {
                     ui.add_space(20.0);
@@ -1195,6 +1238,11 @@ impl App {
         let (outer, response) = ui.allocate_exact_size(vec2(width, 38.0), Sense::click());
         let rect = outer.shrink2(vec2(10.0, 1.0));
         let selected = self.page == page;
+        let hover = ui
+            .ctx()
+            .animate_bool_responsive(response.id.with("hover"), response.hovered());
+        // Labels fade out as the sidebar folds to icons.
+        let label_alpha = (1.0 - self.sidebar_fold * 1.8).clamp(0.0, 1.0);
         let painter = ui.painter();
         if selected {
             painter.rect_filled(rect, theme::SMALL_RADIUS as f32, p.raised);
@@ -1203,25 +1251,24 @@ impl App {
                 vec2(3.0, 16.0),
             );
             painter.rect_filled(bar, 2.0, p.accent);
-        } else if response.hovered() {
+        } else if hover > 0.0 {
             painter.rect_filled(
                 rect,
                 theme::SMALL_RADIUS as f32,
-                p.raised.gamma_multiply(0.6),
+                p.raised.gamma_multiply(0.6 * hover),
             );
         }
-        let color = if selected { p.text } else { p.muted };
+        let color = if selected {
+            p.text
+        } else {
+            p.muted.lerp_to_gamma(p.text, hover)
+        };
         let icon_rect = egui::Rect::from_center_size(
             pos2(rect.left() + 22.0, rect.center().y),
             vec2(18.0, 18.0),
         );
-        icons::paint(
-            ui,
-            icon_rect,
-            icon,
-            if selected { p.accent } else { p.muted },
-        );
-        ui.painter().text(
+        icons::paint(ui, icon_rect, icon, if selected { p.accent } else { color });
+        ui.painter().with_clip_rect(rect).text(
             pos2(rect.left() + 42.0, rect.center().y),
             Align2::LEFT_CENTER,
             label,
@@ -1230,8 +1277,13 @@ impl App {
             } else {
                 theme::regular(14.0)
             },
-            color,
+            color.gamma_multiply(label_alpha),
         );
+        let response = if label_alpha < 1.0 {
+            response.on_hover_text(label)
+        } else {
+            response
+        };
         if response
             .on_hover_cursor(egui::CursorIcon::PointingHand)
             .clicked()
@@ -1499,9 +1551,13 @@ impl eframe::App for App {
             .exact_size(TITLE_HEIGHT)
             .frame(Frame::new().fill(p.sidebar))
             .show(ui, |ui| self.title_bar(ui));
+        let narrow = ctx.content_rect().width() < FOLD_BELOW;
+        self.sidebar_fold = ctx.animate_bool_with_time(egui::Id::new("sidebar-fold"), narrow, 0.22);
+        let t = self.sidebar_fold;
+        let eased = t * t * (3.0 - 2.0 * t);
         egui::Panel::left("sidebar")
             .resizable(false)
-            .exact_size(SIDEBAR_WIDTH)
+            .exact_size(egui::lerp(SIDEBAR_WIDTH..=SIDEBAR_FOLDED, eased))
             .frame(
                 Frame::new()
                     .fill(p.sidebar)

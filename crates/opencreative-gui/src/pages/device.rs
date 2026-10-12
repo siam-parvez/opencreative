@@ -11,12 +11,14 @@ use opencreative_render::panels::Layout;
 use crate::icons::{self, Icon};
 use crate::library::MediaKind;
 use crate::theme::{self, Palette};
-use crate::widgets::{Swatch, card_look, preview_tiles, section, segmented, swatches, toggle};
+use crate::widgets::{Swatch, card_look, pill, section, segmented, swatches};
 use crate::{App, Page, is_digital, is_music};
 
-const CONTROLS_WIDTH: f32 = 300.0;
-/// Upper bound on how much the 320x240 preview is enlarged.
-const MAX_PREVIEW_ZOOM: f32 = 2.0;
+/// The Customize panel beside the stage, and the space between them.
+const PANEL_WIDTH: f32 = 300.0;
+const PANEL_GAP: f32 = 16.0;
+/// The floating toolbar's height, kept clear under the preview.
+const TOOLBAR_HEIGHT: f32 = 54.0;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Mode {
@@ -64,7 +66,7 @@ const SWATCHES: [[u8; 3]; 8] = [
 
 pub fn show(app: &mut App, ui: &mut egui::Ui) {
     let p = Palette::of(ui.ctx());
-    let mut mode = if is_digital(&app.applied.scene) {
+    let mode = if is_digital(&app.applied.scene) {
         Mode::Digital
     } else if is_music(&app.applied.scene) {
         Mode::Music
@@ -72,75 +74,323 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         Mode::Multimedia
     };
 
+    // Which cooler, and a way back to the device list.
+    let name = app
+        .device
+        .clone()
+        .unwrap_or_else(|| opencreative_device::SUPPORTED[0].name.to_owned());
+    let title = app.device_title(&name).to_owned();
     ui.horizontal(|ui| {
+        let dot = if app.device.is_some() {
+            p.good
+        } else {
+            p.faint
+        };
+        let (rect, _) = ui.allocate_exact_size(vec2(8.0, 8.0), Sense::hover());
+        ui.painter().circle_filled(rect.center(), 3.5, dot);
         let crumb = ui
-            .add(
-                egui::Label::new(
-                    egui::RichText::new("Devices")
-                        .font(theme::semibold(22.0))
-                        .color(p.muted),
-                )
-                .sense(Sense::click()),
-            )
+            .add(egui::Label::new(egui::RichText::new(title).color(p.muted)).sense(Sense::click()))
+            .on_hover_text("All devices")
             .on_hover_cursor(egui::CursorIcon::PointingHand);
         if crumb.clicked() {
             app.page = Page::Devices;
         }
-        ui.label(
-            egui::RichText::new("/")
-                .font(theme::semibold(22.0))
-                .color(p.faint),
-        );
-        let name = app
-            .device
-            .clone()
-            .unwrap_or_else(|| opencreative_device::SUPPORTED[0].name.to_owned());
-        let name = app.device_title(&name).to_owned();
-        ui.label(
-            egui::RichText::new(name)
-                .font(theme::semibold(22.0))
-                .color(p.text),
-        );
     });
-    ui.add_space(14.0);
+    ui.add_space(10.0);
+    if app.device.is_none() {
+        notice(app, ui);
+        ui.add_space(12.0);
+    }
 
-    if let Some(picked) = mode_cards(ui, mode) {
-        mode = picked;
-        let scene = match mode {
+    // The stage fills what's left of the window; the Customize panel sits
+    // beside it when open.
+    let height = (ui.clip_rect().bottom() - ui.cursor().top()).max(460.0);
+    // The panel slides in from the right; the stage gives way as it does.
+    let open =
+        ui.ctx()
+            .animate_bool_with_time(egui::Id::new("customize-open"), app.customize_open, 0.22);
+    let slot = (PANEL_WIDTH + PANEL_GAP) * ease(open);
+    let stage_width = (ui.available_width() - slot).max(360.0);
+    let mut stage = egui::Rect::NOTHING;
+    ui.horizontal_top(|ui| {
+        ui.spacing_mut().item_spacing.x = 0.0;
+        let (rect, _) = ui.allocate_exact_size(vec2(stage_width, height), Sense::hover());
+        stage = rect;
+        let mut inner = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(rect)
+                .layout(egui::Layout::top_down(egui::Align::Center)),
+        );
+        stage_content(app, &mut inner, mode, height);
+        if slot > 0.5 {
+            let (slot, _) = ui.allocate_exact_size(vec2(slot, height), Sense::hover());
+            // Drawn at full width against the slot's right edge, so it
+            // slides rather than squeezes.
+            let panel = egui::Rect::from_min_size(
+                egui::pos2(slot.right() - PANEL_WIDTH, slot.top()),
+                vec2(PANEL_WIDTH, height),
+            );
+            let mut inner = ui.new_child(
+                egui::UiBuilder::new()
+                    .max_rect(panel)
+                    .layout(egui::Layout::top_down(egui::Align::Min)),
+            );
+            inner.set_clip_rect(slot.expand(1.0).intersect(ui.clip_rect()));
+            customize_panel(app, &mut inner, mode, height);
+        }
+    });
+
+    // The toolbar floats over the bottom of the stage while it's in view;
+    // its labels show when there's room for them.
+    let anchor = stage.center_bottom() - vec2(0.0, 16.0);
+    let fit = Fit {
+        labels: stage.width() >= 720.0,
+        narrow: stage.width() < 520.0,
+    };
+    if ui.clip_rect().contains(anchor - vec2(0.0, 1.0))
+        && let Some(picked) = toolbar(app, ui.ctx(), anchor, mode, fit)
+    {
+        let scene = match picked {
             Mode::Digital => app.digital_scene.clone(),
             Mode::Multimedia => app.media_scene.clone(),
             Mode::Music => app.music_scene.clone(),
         };
         app.set_scene(scene);
     }
+}
+
+/// The preview, centered in the space above the toolbar, with a line on
+/// what it's showing.
+fn stage_content(app: &mut App, ui: &mut egui::Ui, mode: Mode, height: f32) {
+    let p = Palette::of(ui.ctx());
+    // About the bezel and caption's height, at the panel's real size.
+    let (_, h) = app.preview.size;
+    let content = h as f32 + 20.0 + 34.0;
+    ui.add_space(((height - TOOLBAR_HEIGHT - 32.0 - content) / 2.0).max(8.0));
+    preview(app, ui);
     ui.add_space(14.0);
+    let caption = match mode {
+        Mode::Digital => {
+            let look = match &app.applied.scene {
+                SceneConfig::Panels { skin, .. } => skin.name(),
+                _ => "Gauges",
+            };
+            match interval(&app.applied.scene) {
+                Some(1.0) => format!("{look} · updating every second"),
+                Some(secs) => format!("{look} · updating every {secs:.1} s"),
+                None => look.to_owned(),
+            }
+        }
+        Mode::Multimedia => match app.media_tab {
+            Some(kind) => kind.name().to_owned(),
+            None => "Solid color".to_owned(),
+        },
+        Mode::Music => "Bars that move with what's playing".to_owned(),
+    };
+    let caption = if app.zen {
+        "Zen mode: the screen is off".to_owned()
+    } else {
+        caption
+    };
+    ui.label(egui::RichText::new(caption).small().color(p.faint));
+}
 
-    if app.device.is_none() {
-        notice(app, ui);
-        ui.add_space(12.0);
-    }
+/// How much the toolbar shows for the stage it sits on.
+#[derive(Debug, Clone, Copy)]
+struct Fit {
+    /// Names beside the mode and Customize icons.
+    labels: bool,
+    /// A shorter brightness slider.
+    narrow: bool,
+}
 
-    ui.horizontal_top(|ui| {
-        ui.vertical(|ui| {
-            ui.set_width(CONTROLS_WIDTH);
-            theme::card(ui, |ui| display_controls(app, ui, mode));
+/// Eases an animation's linear progress in and out.
+fn ease(t: f32) -> f32 {
+    t * t * (3.0 - 2.0 * t)
+}
+
+/// The floating toolbar: the mode, brightness, Zen, rotation and the
+/// Customize panel. Returns a newly picked mode.
+fn toolbar(
+    app: &mut App,
+    ctx: &egui::Context,
+    anchor: egui::Pos2,
+    mode: Mode,
+    fit: Fit,
+) -> Option<Mode> {
+    let p = Palette::of(ctx);
+    let mut picked = None;
+    egui::Area::new(egui::Id::new("screen-toolbar"))
+        .order(egui::Order::Middle)
+        .fixed_pos(anchor)
+        .pivot(egui::Align2::CENTER_BOTTOM)
+        .show(ctx, |ui| {
+            egui::Frame::new()
+                .fill(p.card)
+                .stroke(Stroke::new(1.0, p.border))
+                .corner_radius(12)
+                .inner_margin(6)
+                .shadow(egui::Shadow {
+                    offset: [0, 10],
+                    blur: 28,
+                    spread: 0,
+                    color: Color32::from_black_alpha(70),
+                })
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 4.0;
+                        for m in Mode::ALL {
+                            let label = fit.labels.then_some(m.label());
+                            let button = tool_button(ui, m.icon(), label, m == mode, m.detail());
+                            if button.clicked() && m != mode {
+                                picked = Some(m);
+                            }
+                        }
+                        separator(ui);
+
+                        ui.add_space(6.0);
+                        icons::show(ui, Icon::Sun, 16.0, p.muted);
+                        ui.spacing_mut().slider_width = if fit.narrow { 72.0 } else { 110.0 };
+                        let mut level = app.brightness;
+                        let slider = ui
+                            .add(egui::Slider::new(&mut level, 0..=100).show_value(false))
+                            .on_hover_text(format!("Brightness {level}%"));
+                        app.brightness = level;
+                        // Send once the user lets go, not on every step of a drag.
+                        if slider.drag_stopped() || (slider.changed() && !slider.dragged()) {
+                            app.set_brightness(level);
+                        }
+                        ui.add_space(6.0);
+
+                        let zen = tool_button(
+                            ui,
+                            Icon::Moon,
+                            None,
+                            app.zen,
+                            "Zen mode: turns the screen off, keeping your layout and brightness",
+                        );
+                        if zen.clicked() {
+                            app.set_zen(!app.zen);
+                        }
+                        let rotation = app.applied.rotation;
+                        let tip = format!("Rotate 90° (now {rotation}°)");
+                        if tool_button(ui, Icon::Rotate, None, false, &tip).clicked() {
+                            app.set_rotation((rotation + 90) % 360);
+                        }
+                        separator(ui);
+
+                        let label = fit.labels.then_some("Customize");
+                        let customize = tool_button(
+                            ui,
+                            Icon::Sliders,
+                            label,
+                            app.customize_open,
+                            "Customize what the screen shows",
+                        );
+                        if customize.clicked() {
+                            app.customize_open = !app.customize_open;
+                        }
+                    });
+                });
         });
-        ui.add_space(4.0);
-        ui.vertical(|ui| {
-            theme::card(ui, |ui| {
-                preview(app, ui);
-                ui.add_space(14.0);
-                ui.separator();
-                ui.add_space(8.0);
-                match mode {
-                    Mode::Digital => digital(app, ui),
-                    Mode::Multimedia => multimedia(app, ui),
-                    Mode::Music => music(app, ui),
-                }
-            });
-        });
+    picked
+}
+
+/// A toolbar button: an icon, with its name beside it when given. It eases
+/// into its hover and accent-tinted `on` looks.
+fn tool_button(
+    ui: &mut egui::Ui,
+    icon: Icon,
+    label: Option<&str>,
+    on: bool,
+    tooltip: &str,
+) -> egui::Response {
+    let p = Palette::of(ui.ctx());
+    let text = label.map(|label| {
+        ui.painter()
+            .layout_no_wrap(label.to_owned(), theme::medium(13.0), p.text)
     });
-    ui.add_space(56.0);
+    let width = text.as_ref().map_or(40.0, |t| t.size().x + 50.0);
+    let (rect, response) = ui.allocate_exact_size(vec2(width, 40.0), Sense::click());
+    let response = response
+        .on_hover_text(tooltip)
+        .on_hover_cursor(egui::CursorIcon::PointingHand);
+    let ctx = ui.ctx();
+    let hover = ease(ctx.animate_bool_responsive(response.id.with("hover"), response.hovered()));
+    let lit = ease(ctx.animate_bool_responsive(response.id.with("on"), on));
+    let fill = Color32::TRANSPARENT
+        .lerp_to_gamma(p.raised, hover)
+        .lerp_to_gamma(p.accent_soft, lit);
+    let tint = p
+        .muted
+        .lerp_to_gamma(p.text, hover)
+        .lerp_to_gamma(p.accent, lit);
+    ui.painter().rect_filled(rect, 9.0, fill);
+    let icon_at = if text.is_some() {
+        rect.left_center() + vec2(21.0, 0.0)
+    } else {
+        rect.center()
+    };
+    icons::paint(
+        ui,
+        egui::Rect::from_center_size(icon_at, vec2(18.0, 18.0)),
+        icon,
+        tint,
+    );
+    if let Some(text) = text {
+        let at = egui::pos2(rect.left() + 38.0, rect.center().y - text.size().y / 2.0);
+        ui.painter()
+            .galley(at, text, p.text.lerp_to_gamma(p.accent, lit));
+    }
+    response
+}
+
+/// A hairline between groups of toolbar buttons.
+fn separator(ui: &mut egui::Ui) {
+    let p = Palette::of(ui.ctx());
+    let (rect, _) = ui.allocate_exact_size(vec2(9.0, 24.0), Sense::hover());
+    ui.painter()
+        .vline(rect.center().x, rect.y_range(), Stroke::new(1.0, p.border));
+}
+
+/// The settings for the current mode, in a card beside the stage.
+fn customize_panel(app: &mut App, ui: &mut egui::Ui, mode: Mode, height: f32) {
+    let p = Palette::of(ui.ctx());
+    egui::Frame::new()
+        .fill(p.card)
+        .stroke(Stroke::new(1.0, p.border))
+        .corner_radius(theme::RADIUS)
+        .inner_margin(egui::Margin::symmetric(18, 16))
+        .show(ui, |ui| {
+            // The panel is PANEL_WIDTH wide, border and margins included.
+            ui.set_width(PANEL_WIDTH - 2.0 * 18.0 - 2.0);
+            ui.horizontal(|ui| {
+                ui.label(
+                    egui::RichText::new("Customize")
+                        .font(theme::semibold(16.0))
+                        .color(p.text),
+                );
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if icon_button(ui, Icon::Close, "Close").clicked() {
+                        app.customize_open = false;
+                    }
+                });
+            });
+            egui::ScrollArea::vertical()
+                .id_salt("customize")
+                .max_height(height - 80.0)
+                .auto_shrink([false, true])
+                .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+                .show(ui, |ui| {
+                    match mode {
+                        Mode::Digital => digital(app, ui),
+                        Mode::Multimedia => multimedia(app, ui),
+                        Mode::Music => music(app, ui),
+                    }
+                    screen_settings(app, ui, mode);
+                    ui.add_space(8.0);
+                });
+        });
 }
 
 impl Mode {
@@ -148,90 +398,28 @@ impl Mode {
 
     fn icon(self) -> Icon {
         match self {
-            Mode::Digital => Icon::Dashboard,
-            Mode::Multimedia => Icon::Image,
-            Mode::Music => Icon::Music,
+            Mode::Digital => Icon::Activity,
+            Mode::Multimedia => Icon::Images,
+            Mode::Music => Icon::AudioLines,
         }
     }
 
-    fn name(self) -> &'static str {
+    /// A short name for the toolbar.
+    fn label(self) -> &'static str {
         match self {
-            Mode::Digital => "Digital",
-            Mode::Multimedia => "Multimedia",
+            Mode::Digital => "Live",
+            Mode::Multimedia => "Pictures",
             Mode::Music => "Music",
         }
     }
 
     fn detail(self) -> &'static str {
         match self {
-            Mode::Digital => "Live temperatures, load and more",
-            Mode::Multimedia => "Images, GIFs, videos and YouTube",
-            Mode::Music => "Bars that move with what's playing",
+            Mode::Digital => "Live data: temperatures, load and more",
+            Mode::Multimedia => "Pictures, GIFs, videos and YouTube",
+            Mode::Music => "Music: bars that move with what's playing",
         }
     }
-}
-
-/// What the screen shows, as three cards side by side. Returns the mode
-/// clicked, if it isn't the current one.
-fn mode_cards(ui: &mut egui::Ui, current: Mode) -> Option<Mode> {
-    let p = Palette::of(ui.ctx());
-    let mut picked = None;
-    ui.columns(Mode::ALL.len(), |cols| {
-        for (col, mode) in cols.iter_mut().zip(Mode::ALL) {
-            let selected = mode == current;
-            let response = col
-                .scope_builder(
-                    egui::UiBuilder::new()
-                        .id_salt(("mode", mode.name()))
-                        .sense(Sense::click()),
-                    |ui| {
-                        let (fill, stroke) = card_look(
-                            ui,
-                            ui.id(),
-                            selected,
-                            ui.response().hovered(),
-                            p.accent_soft,
-                            p.card,
-                        );
-                        egui::Frame::new()
-                            .fill(fill)
-                            .stroke(Stroke::new(if selected { 1.5 } else { 1.0 }, stroke.color))
-                            .corner_radius(theme::RADIUS)
-                            .inner_margin(egui::Margin::symmetric(16, 14))
-                            .show(ui, |ui| {
-                                ui.set_width(ui.available_width());
-                                ui.horizontal(|ui| {
-                                    let tint = if selected { p.accent } else { p.muted };
-                                    icons::show(ui, mode.icon(), 22.0, tint);
-                                    ui.add_space(4.0);
-                                    ui.vertical(|ui| {
-                                        ui.spacing_mut().item_spacing.y = 2.0;
-                                        ui.label(
-                                            egui::RichText::new(mode.name())
-                                                .font(theme::semibold(15.0))
-                                                .color(p.text),
-                                        );
-                                        ui.add(
-                                            egui::Label::new(
-                                                egui::RichText::new(mode.detail())
-                                                    .small()
-                                                    .color(p.muted),
-                                            )
-                                            .truncate(),
-                                        );
-                                    });
-                                });
-                            });
-                    },
-                )
-                .response
-                .on_hover_cursor(egui::CursorIcon::PointingHand);
-            if response.clicked() && !selected {
-                picked = Some(mode);
-            }
-        }
-    });
-    picked
 }
 
 fn notice(app: &mut App, ui: &mut egui::Ui) {
@@ -260,97 +448,34 @@ fn notice(app: &mut App, ui: &mut egui::Ui) {
         });
 }
 
-fn display_controls(app: &mut App, ui: &mut egui::Ui, mode: Mode) {
-    let p = Palette::of(ui.ctx());
-    section(ui, "Display");
-    ui.add_space(8.0);
-
-    labelled_value(ui, "Brightness", &format!("{}%", app.brightness));
-    ui.spacing_mut().slider_width = ui.available_width();
-    let slider = ui.add(egui::Slider::new(&mut app.brightness, 0..=100).show_value(false));
-    // Send once the user lets go, not on every step of a drag.
-    if slider.drag_stopped() || (slider.changed() && !slider.dragged()) {
-        app.set_brightness(app.brightness);
+/// How the screen draws: colors (not for pictures and videos, which keep
+/// their own) and, for live data, how often it refreshes.
+fn screen_settings(app: &mut App, ui: &mut egui::Ui, mode: Mode) {
+    let refresh = if mode == Mode::Digital {
+        interval(&app.applied.scene)
+    } else {
+        None
+    };
+    if mode == Mode::Multimedia {
+        return;
     }
-    ui.add_space(14.0);
-
-    ui.horizontal(|ui| {
-        ui.label(egui::RichText::new("Zen mode").color(p.text));
-        icons::show(ui, Icon::Help, 15.0, p.faint).on_hover_text(
-            "Turns the screen off. Your layout and brightness are kept for when you turn it back on.",
-        );
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let mut zen = app.zen;
-            if toggle(ui, &mut zen).changed() {
-                app.set_zen(zen);
-            }
-        });
-    });
-    ui.add_space(14.0);
-
-    // Pictures and videos keep their own colors.
-    if mode != Mode::Multimedia {
-        ui.label(egui::RichText::new("Screen colors").color(p.text));
-        ui.add_space(4.0);
+    group(ui, "SCREEN");
+    line(ui, "Colors", |ui| {
         let mut theme = app.applied.screen_theme;
-        let tile = egui::vec2(
-            ((ui.available_width() - 10.0) / 2.0).clamp(96.0, 140.0),
-            96.0,
-        );
-        if preview_tiles(
+        if segmented(
             ui,
             &mut theme,
             &[
                 (opencreative_config::ScreenTheme::Dark, "Dark"),
                 (opencreative_config::ScreenTheme::Light, "Light"),
             ],
-            tile,
-            |painter, rect, option| {
-                let (bg, fg) = match option {
-                    opencreative_config::ScreenTheme::Dark => {
-                        (egui::Color32::BLACK, egui::Color32::WHITE)
-                    }
-                    opencreative_config::ScreenTheme::Light => {
-                        (egui::Color32::WHITE, egui::Color32::BLACK)
-                    }
-                };
-                let p = Palette::of(painter.ctx());
-                painter.rect(
-                    rect,
-                    theme::SMALL_RADIUS,
-                    bg,
-                    egui::Stroke::new(1.0, p.border),
-                    egui::StrokeKind::Inside,
-                );
-                painter.text(
-                    rect.center(),
-                    egui::Align2::CENTER_CENTER,
-                    "41°",
-                    theme::numeric(22.0),
-                    fg,
-                );
-            },
         ) {
             app.set_screen_theme(theme);
         }
-        ui.add_space(14.0);
-    }
-
-    ui.label(egui::RichText::new("Rotation").color(p.text));
-    let mut rotation = app.applied.rotation;
-    if segmented(
-        ui,
-        &mut rotation,
-        &[(0, "0°"), (90, "90°"), (180, "180°"), (270, "270°")],
-    ) {
-        app.set_rotation(rotation);
-    }
-
-    if mode == Mode::Digital
-        && let Some(mut secs) = interval(&app.applied.scene)
-    {
-        ui.add_space(14.0);
-        labelled_value(ui, "Refresh every", &format!("{secs:.1} s"));
+    });
+    if let Some(mut secs) = refresh {
+        labelled_value(ui, "Refresh", &format!("Every {secs:.1} s"));
+        ui.spacing_mut().slider_width = ui.available_width();
         let slider = ui.add(egui::Slider::new(&mut secs, 0.5..=5.0).show_value(false));
         if slider.drag_stopped() || (slider.changed() && !slider.dragged()) {
             let mut scene = app.applied.scene.clone();
@@ -360,10 +485,33 @@ fn display_controls(app: &mut App, ui: &mut egui::Ui, mode: Mode) {
     }
 }
 
-/// "Label ........ value" on one line.
+/// A small uppercase heading for a group of settings in the panel.
+fn group(ui: &mut egui::Ui, title: &str) {
+    let p = Palette::of(ui.ctx());
+    ui.add_space(18.0);
+    ui.label(
+        egui::RichText::new(title)
+            .font(theme::medium(11.0))
+            .color(p.faint),
+    );
+    ui.add_space(4.0);
+}
+
+/// One setting: its name on the left, the control at the right end.
+fn line(ui: &mut egui::Ui, label: &str, add: impl FnOnce(&mut egui::Ui)) {
+    let p = Palette::of(ui.ctx());
+    ui.horizontal(|ui| {
+        ui.set_min_height(38.0);
+        ui.label(egui::RichText::new(label).color(p.text));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), add);
+    });
+}
+
+/// "Label ........ value" on one line, above a slider.
 fn labelled_value(ui: &mut egui::Ui, label: &str, value: &str) {
     let p = Palette::of(ui.ctx());
     ui.horizontal(|ui| {
+        ui.set_min_height(32.0);
         ui.label(egui::RichText::new(label).color(p.text));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.label(egui::RichText::new(value).color(p.muted));
@@ -373,29 +521,19 @@ fn labelled_value(ui: &mut egui::Ui, label: &str, value: &str) {
 
 fn preview(app: &mut App, ui: &mut egui::Ui) {
     let p = Palette::of(ui.ctx());
-    ui.horizontal(|ui| {
-        ui.label(
-            egui::RichText::new("Preview")
-                .font(theme::semibold(15.0))
-                .color(p.text),
-        );
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if icon_button(ui, Icon::Rotate, "Rotate 90°").clicked() {
-                let next = (app.applied.rotation + 90) % 360;
-                app.set_rotation(next);
-            }
-        });
-    });
-    ui.add_space(6.0);
-
     let (w, h) = app.preview.size;
     let pad = 10.0;
     // Whole-number zoom in physical pixels keeps every panel pixel sharp.
     let ppp = ui.ctx().pixels_per_point();
     let room = (ui.available_width() - 2.0 * pad) * ppp;
-    let zoom = (room / w.max(1) as f32)
-        .floor()
-        .clamp(1.0, MAX_PREVIEW_ZOOM);
+    // Whole-number zoom, never larger than the panel's real size in points;
+    // a column too narrow for one physical pixel per pixel scales down.
+    let fit = room / w.max(1) as f32;
+    let zoom = if fit >= 1.0 {
+        fit.floor().min(ppp.round().max(1.0))
+    } else {
+        fit
+    };
     let screen = vec2(w as f32, h as f32) * zoom / ppp;
     ui.vertical_centered(|ui| {
         let (bezel, response) =
@@ -410,7 +548,7 @@ fn preview(app: &mut App, ui: &mut egui::Ui) {
                     texture.id(),
                     inner,
                     egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                    Color32::WHITE,
+                    app.preview_tint(),
                 );
             }
             None => {
@@ -475,12 +613,11 @@ fn digital(app: &mut App, ui: &mut egui::Ui) {
     let scene = app.applied.scene.clone();
     let secs = interval(&scene).unwrap_or(1.0);
 
-    section(ui, "Skin");
+    group(ui, "LOOK");
     if let Some(next) = skin_gallery(app, ui, &scene, secs) {
         app.set_scene(next);
         return;
     }
-    ui.add_space(12.0);
 
     match scene {
         SceneConfig::Panels {
@@ -499,50 +636,43 @@ fn digital(app: &mut App, ui: &mut egui::Ui) {
                 claude,
                 no_pc_power,
             };
-            section(ui, "Display data");
             let mut changed = false;
-            egui::Grid::new("display-data")
-                .num_columns(2)
-                .spacing(vec2(16.0, 8.0))
-                .show(ui, |ui| {
-                    ui.label(egui::RichText::new("Main reading").color(p.muted));
-                    changed |= metric_combo(ui, "primary", &mut primary, choices);
-                    ui.end_row();
-                    ui.label(egui::RichText::new("Second reading").color(p.muted));
-                    changed |= metric_combo(ui, "secondary-1", &mut secondary[0], choices);
-                    ui.end_row();
-                    ui.label(egui::RichText::new("Third reading").color(p.muted));
-                    // The HUD skin charts network traffic in that spot instead.
-                    let shown = skin != SkinConfig::Hud;
-                    ui.add_enabled_ui(shown, |ui| {
-                        changed |= metric_combo(ui, "secondary-2", &mut secondary[1], choices);
-                    })
-                    .response
-                    .on_disabled_hover_text("The HUD skin shows network speeds here.");
-                    ui.end_row();
-                });
-            ui.add_space(12.0);
-
-            section(ui, "Recommended");
-            let presets = PRESETS.into_iter().chain(claude.then_some(CLAUDE_PRESET));
-            for (name, main, others) in presets {
-                let selected = primary == main && secondary == others;
-                let detail = format!(
-                    "{} (main) + {} + {}",
-                    main.name(),
-                    others[0].name(),
-                    others[1].name()
-                );
-                let response = ui.radio(selected, egui::RichText::new(name).color(p.text));
-                ui.indent(name, |ui| {
-                    ui.label(egui::RichText::new(detail).small().color(p.muted));
-                });
-                if response.clicked() && !selected {
-                    primary = main;
-                    secondary = others;
-                    changed = true;
+            group(ui, "READINGS");
+            line(ui, "Main", |ui| {
+                changed |= metric_combo(ui, "primary", &mut primary, choices);
+            });
+            line(ui, "Second", |ui| {
+                changed |= metric_combo(ui, "secondary-1", &mut secondary[0], choices);
+            });
+            line(ui, "Third", |ui| {
+                // The HUD skin charts network traffic in that spot instead.
+                let shown = skin != SkinConfig::Hud;
+                ui.add_enabled_ui(shown, |ui| {
+                    changed |= metric_combo(ui, "secondary-2", &mut secondary[1], choices);
+                })
+                .response
+                .on_disabled_hover_text("The HUD skin shows network speeds here.");
+            });
+            // Presets: each sets all three readings.
+            ui.add_space(6.0);
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = vec2(6.0, 6.0);
+                let presets = PRESETS.into_iter().chain(claude.then_some(CLAUDE_PRESET));
+                for (name, main, others) in presets {
+                    let selected = primary == main && secondary == others;
+                    let detail = format!(
+                        "{} (main), {}, {}",
+                        main.name(),
+                        others[0].name(),
+                        others[1].name()
+                    );
+                    if pill(ui, name, selected).on_hover_text(detail).clicked() && !selected {
+                        primary = main;
+                        secondary = others;
+                        changed = true;
+                    }
                 }
-            }
+            });
             if changed {
                 app.set_scene(SceneConfig::Panels {
                     skin,
@@ -606,7 +736,7 @@ const THUMB_CHROME: f32 = 2.0 * 8.0 + 2.0 * 2.0;
 fn thumb_size(width: f32, gap: f32) -> egui::Vec2 {
     let n = Look::ALL.len() as f32;
     let w = ((width - gap * (n - 1.0)) / n - THUMB_CHROME)
-        .clamp(80.0, THUMB_SIZE.x)
+        .clamp(56.0, THUMB_SIZE.x)
         .floor();
     vec2(w, (w * THUMB_SIZE.y / THUMB_SIZE.x).round())
 }
@@ -776,8 +906,10 @@ fn metric_combo(ui: &mut egui::Ui, id: &str, metric: &mut Metric, choices: Choic
             m.name()
         }
     };
+    // One width for every reading, so they line up beside their labels in
+    // the Customize panel.
     egui::ComboBox::from_id_salt(id)
-        .width(220.0)
+        .width(180.0)
         .selected_text(name(*metric))
         .show_ui(ui, |ui| {
             for m in Metric::ALL
@@ -811,9 +943,8 @@ fn music(app: &mut App, ui: &mut egui::Ui) {
     let mut rgb = color.0;
     let mut changed = false;
 
-    section(ui, "Bars");
-    ui.horizontal(|ui| {
-        ui.label(egui::RichText::new("Style").color(p.muted));
+    group(ui, "BARS");
+    line(ui, "Style", |ui| {
         changed |= segmented(
             ui,
             &mut style,
@@ -823,20 +954,20 @@ fn music(app: &mut App, ui: &mut egui::Ui) {
             ],
         );
     });
-    ui.add_space(6.0);
-    ui.horizontal(|ui| {
-        ui.label(egui::RichText::new("How many").color(p.muted));
-        let slider = ui.add(egui::Slider::new(&mut bars, 8..=48).step_by(4.0));
-        changed |= slider.drag_stopped() || (slider.changed() && !slider.dragged());
-    });
-    ui.add_space(12.0);
-
-    section(ui, "Color");
+    labelled_value(ui, "How many", &bars.to_string());
+    ui.spacing_mut().slider_width = ui.available_width();
+    let slider = ui.add(
+        egui::Slider::new(&mut bars, 8..=48)
+            .step_by(4.0)
+            .show_value(false),
+    );
+    changed |= slider.drag_stopped() || (slider.changed() && !slider.dragged());
     let current = if rainbow {
         Swatch::Rainbow
     } else {
         Swatch::Color(rgb)
     };
+    group(ui, "COLOR");
     match swatches(ui, "music", current, &SWATCHES, true) {
         Some(Swatch::Rainbow) => {
             rainbow = true;
@@ -849,7 +980,7 @@ fn music(app: &mut App, ui: &mut egui::Ui) {
         }
         None => {}
     }
-    ui.add_space(12.0);
+    ui.add_space(4.0);
     ui.label(
         egui::RichText::new(
             "The bars follow whatever your speakers or headphones are playing. \
@@ -873,14 +1004,24 @@ fn music(app: &mut App, ui: &mut egui::Ui) {
 fn multimedia(app: &mut App, ui: &mut egui::Ui) {
     let scene = app.applied.scene.clone();
 
-    section(ui, "Source");
     let mut tab = app.media_tab;
     let mut tabs: Vec<(Option<MediaKind>, &str)> = MediaKind::ALL
         .iter()
         .map(|k| (Some(*k), k.name()))
         .collect();
     tabs.push((None, "Color"));
-    if segmented(ui, &mut tab, &tabs) {
+    group(ui, "SOURCE");
+    let mut switched = false;
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = vec2(6.0, 6.0);
+        for (option, name) in &tabs {
+            if pill(ui, name, tab == *option).clicked() && tab != *option {
+                tab = *option;
+                switched = true;
+            }
+        }
+    });
+    if switched {
         app.switch_media_tab(tab);
         match tab {
             None => app.set_scene(SceneConfig::Solid {

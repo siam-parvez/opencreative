@@ -1,6 +1,6 @@
 //! Devices: supported coolers found on USB, pictured with their live screen.
 
-use eframe::egui::{self, Color32, Rect, Sense, pos2, vec2};
+use eframe::egui::{self, Rect, Sense, pos2, vec2};
 
 use crate::icons::{self, Icon};
 use crate::pages::header;
@@ -236,7 +236,7 @@ fn picture(app: &mut App, ui: &mut egui::Ui, width: f32, connected: bool) {
             texture,
             screen,
             Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
-            Color32::WHITE,
+            app.preview_tint(),
         );
     }
 }

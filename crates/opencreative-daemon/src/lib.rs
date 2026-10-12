@@ -148,13 +148,17 @@ struct Shared {
 impl Shared {
     /// What the top-bar icon's menu shows.
     fn view(&self) -> tray::View {
-        let brightness = self.config.lock().expect("config lock").brightness;
+        let config = self.config.lock().expect("config lock").clone();
         let state = self.state.lock().expect("state lock");
         tray::View {
             device: state.device.clone(),
             screen_on: state.screen_on,
             zen: state.zen,
-            brightness: brightness.unwrap_or(100),
+            brightness: config.brightness.unwrap_or(100),
+            kind: config.scene.kind(),
+            look: tray::Look::of(&config.scene),
+            theme: config.screen_theme,
+            rotation: config.rotation,
         }
     }
 
@@ -218,6 +222,10 @@ impl Shared {
             }
             Request::SetScene { scene } => match scene.to_scene() {
                 Ok(parsed) => {
+                    // Both kept, so the top-bar menu can switch back to either.
+                    let previous = config.scene.clone();
+                    config.recent.remember(&previous);
+                    config.recent.remember(&scene);
                     config.scene = scene;
                     Command::SetScene(parsed)
                 }

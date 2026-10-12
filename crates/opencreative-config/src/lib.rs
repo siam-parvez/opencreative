@@ -74,6 +74,61 @@ pub struct Config {
     /// Dark or light screens (readings, music bars, Zen; not pictures).
     #[serde(skip_serializing_if = "ScreenTheme::is_dark")]
     pub screen_theme: ScreenTheme,
+    /// The last scene shown of each kind, so switching back to a kind (from
+    /// the top-bar menu, say) brings it back as it was.
+    #[serde(skip_serializing_if = "Recent::is_empty")]
+    pub recent: Recent,
+}
+
+/// What a scene shows, broadly: the app's three modes.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum SceneKind {
+    /// Live readings: the Panels skins and the gauges.
+    #[default]
+    Digital,
+    /// Pictures, GIFs, videos and plain colors.
+    Media,
+    /// Bars that move with the music.
+    Music,
+}
+
+/// The last scene of each kind.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Recent {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub digital: Option<SceneConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub media: Option<SceneConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub music: Option<SceneConfig>,
+}
+
+impl Recent {
+    fn is_empty(&self) -> bool {
+        self.digital.is_none() && self.media.is_none() && self.music.is_none()
+    }
+
+    /// Keeps `scene` as the last one of its kind.
+    pub fn remember(&mut self, scene: &SceneConfig) {
+        let slot = match scene.kind() {
+            SceneKind::Digital => &mut self.digital,
+            SceneKind::Media => &mut self.media,
+            SceneKind::Music => &mut self.music,
+        };
+        *slot = Some(scene.clone());
+    }
+
+    /// The last scene of `kind`, or that kind's default.
+    pub fn get(&self, kind: SceneKind) -> SceneConfig {
+        let last = match kind {
+            SceneKind::Digital => &self.digital,
+            SceneKind::Media => &self.media,
+            SceneKind::Music => &self.music,
+        };
+        last.clone()
+            .unwrap_or_else(|| SceneConfig::default_for(kind))
+    }
 }
 
 /// The look of drawn screens.
@@ -318,6 +373,33 @@ impl Default for SceneConfig {
 }
 
 impl SceneConfig {
+    /// Which of the app's modes shows this scene.
+    pub fn kind(&self) -> SceneKind {
+        match self {
+            SceneConfig::Monitor { .. } | SceneConfig::Panels { .. } => SceneKind::Digital,
+            SceneConfig::Music { .. } => SceneKind::Music,
+            SceneConfig::Image { .. } | SceneConfig::Media { .. } | SceneConfig::Solid { .. } => {
+                SceneKind::Media
+            }
+        }
+    }
+
+    /// A first scene of `kind`, before one has been set up.
+    pub fn default_for(kind: SceneKind) -> SceneConfig {
+        match kind {
+            SceneKind::Digital => SceneConfig::default(),
+            SceneKind::Media => SceneConfig::Solid {
+                color: Rgb([0x0d, 0x9b, 0x94]),
+            },
+            SceneKind::Music => SceneConfig::Music {
+                style: BarStyleConfig::default(),
+                color: default_music_color(),
+                rainbow: false,
+                bars: default_bars(),
+            },
+        }
+    }
+
     pub fn to_scene(&self) -> std::result::Result<Scene, InvalidValue> {
         let interval = |secs: f64| {
             if secs.is_finite() && secs > 0.0 {
@@ -565,6 +647,10 @@ bars = 24
             },
             hide_tray: true,
             screen_theme: ScreenTheme::Light,
+            recent: Recent {
+                music: Some(SceneConfig::default_for(SceneKind::Music)),
+                ..Recent::default()
+            },
         };
         save(&path, &config).unwrap();
         assert!(fs::read_to_string(&path).unwrap().contains("\"#ff8800\""));
@@ -682,5 +768,34 @@ bars = 24
         assert_eq!("00ff00".parse::<Rgb>(), Ok(Rgb([0, 0xff, 0])));
         assert!("#fff".parse::<Rgb>().is_err());
         assert_eq!(Rgb([1, 2, 3]).to_string(), "#010203");
+    }
+
+    #[test]
+    fn recent_scenes_round_trip_and_fall_back() {
+        let mut config = Config::default();
+        assert_eq!(config.recent.get(SceneKind::Music).kind(), SceneKind::Music);
+        let bars = SceneConfig::Music {
+            style: BarStyleConfig::Mirror,
+            color: Rgb([1, 2, 3]),
+            rainbow: true,
+            bars: 32,
+        };
+        config.recent.remember(&bars);
+        config.recent.remember(&config.scene.clone());
+        assert_eq!(config.recent.get(SceneKind::Music), bars);
+        assert_eq!(
+            config.recent.get(SceneKind::Digital),
+            SceneConfig::default()
+        );
+
+        let text = toml::to_string(&config).unwrap();
+        let back: Config = toml::from_str(&text).unwrap();
+        assert_eq!(back, config);
+        // Nothing remembered writes nothing.
+        assert!(
+            !toml::to_string(&Config::default())
+                .unwrap()
+                .contains("recent")
+        );
     }
 }
