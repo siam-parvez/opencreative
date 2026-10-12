@@ -211,6 +211,7 @@ pub struct App {
     /// The last choice in each mode, so switching modes restores it.
     pub digital_scene: SceneConfig,
     pub media_scene: SceneConfig,
+    pub music_scene: SceneConfig,
     /// A media scene being edited (dragging to pan, zoom slider): the
     /// preview shows it, and it's sent to the cooler when the edit ends.
     pub draft_scene: Option<SceneConfig>,
@@ -296,6 +297,7 @@ impl App {
             brightness: 100,
             digital_scene: SceneConfig::default(),
             media_scene: default_media_scene(),
+            music_scene: SceneConfig::music(),
             draft_scene: None,
             media_tab: None,
             selected_item: 0,
@@ -374,6 +376,8 @@ impl App {
                 }
                 if is_digital(&status.config.scene) {
                     self.digital_scene = status.config.scene.clone();
+                } else if is_music(&status.config.scene) {
+                    self.music_scene = status.config.scene.clone();
                 } else if !self.synced || status.config.scene != self.media_scene {
                     self.media_scene = status.config.scene.clone();
                     self.follow_media_scene();
@@ -488,6 +492,8 @@ impl App {
         self.draft_scene = None;
         if is_digital(&scene) {
             self.digital_scene = scene.clone();
+        } else if is_music(&scene) {
+            self.music_scene = scene.clone();
         } else {
             self.media_scene = scene.clone();
         }
@@ -1246,6 +1252,10 @@ fn gl_renderer(cc: &eframe::CreationContext<'_>) -> Option<String> {
     (!name.is_empty() && !name.contains("llvmpipe")).then(|| name.to_owned())
 }
 
+pub fn is_music(scene: &SceneConfig) -> bool {
+    matches!(scene, SceneConfig::Music { .. })
+}
+
 pub fn is_digital(scene: &SceneConfig) -> bool {
     matches!(
         scene,
@@ -1391,5 +1401,7 @@ mod tests {
     fn digital_and_media_scenes_are_told_apart() {
         assert!(is_digital(&SceneConfig::default()));
         assert!(!is_digital(&default_media_scene()));
+        assert!(is_music(&SceneConfig::music()));
+        assert!(!is_digital(&SceneConfig::music()));
     }
 }

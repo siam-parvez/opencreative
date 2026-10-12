@@ -12,6 +12,7 @@ authors.workspace = true
 opencreative-device.workspace = true
 opencreative-render.workspace = true
 opencreative-sensors.workspace = true
+opencreative-audio.workspace = true
 image.workspace = true
 chrono.workspace = true
 thiserror.workspace = true

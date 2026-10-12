@@ -5,14 +5,14 @@
 use eframe::egui::{self, Color32, Sense, Stroke, vec2};
 use std::time::{Duration, Instant};
 
-use opencreative_config::{FitConfig, Metric, Rgb, SceneConfig, SkinConfig};
+use opencreative_config::{BarStyleConfig, FitConfig, Metric, Rgb, SceneConfig, SkinConfig};
 use opencreative_render::panels::Layout;
 
 use crate::icons::{self, Icon};
 use crate::library::MediaKind;
 use crate::theme::{self, Palette};
 use crate::widgets::{section, segmented, toggle};
-use crate::{App, Page, is_digital};
+use crate::{App, Page, is_digital, is_music};
 
 const CONTROLS_WIDTH: f32 = 300.0;
 /// Upper bound on how much the 320x240 preview is enlarged.
@@ -22,6 +22,7 @@ const MAX_PREVIEW_ZOOM: f32 = 2.0;
 enum Mode {
     Digital,
     Multimedia,
+    Music,
 }
 
 /// One-click layouts, like the vendor app's "recommended combinations".
@@ -65,6 +66,8 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     let p = Palette::of(ui.ctx());
     let mut mode = if is_digital(&app.applied.scene) {
         Mode::Digital
+    } else if is_music(&app.applied.scene) {
+        Mode::Music
     } else {
         Mode::Multimedia
     };
@@ -102,11 +105,16 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             if segmented(
                 ui,
                 &mut mode,
-                &[(Mode::Digital, "Digital"), (Mode::Multimedia, "Multimedia")],
+                &[
+                    (Mode::Digital, "Digital"),
+                    (Mode::Multimedia, "Multimedia"),
+                    (Mode::Music, "Music"),
+                ],
             ) {
                 let scene = match mode {
                     Mode::Digital => app.digital_scene.clone(),
                     Mode::Multimedia => app.media_scene.clone(),
+                    Mode::Music => app.music_scene.clone(),
                 };
                 app.set_scene(scene);
             }
@@ -135,6 +143,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 match mode {
                     Mode::Digital => digital(app, ui),
                     Mode::Multimedia => multimedia(app, ui),
+                    Mode::Music => music(app, ui),
                 }
             });
         });
@@ -286,7 +295,12 @@ fn preview(app: &mut App, ui: &mut egui::Ui) {
 /// Dragging the preview moves the selected playlist item's focus point;
 /// scrolling zooms. Both edit a draft that's sent when the edit pauses.
 fn pan_and_zoom(app: &mut App, ui: &egui::Ui, response: &egui::Response, screen: egui::Vec2) {
-    if is_digital(&app.applied.scene) || matches!(app.applied.scene, SceneConfig::Solid { .. }) {
+    if is_digital(&app.applied.scene)
+        || matches!(
+            app.applied.scene,
+            SceneConfig::Solid { .. } | SceneConfig::Music { .. }
+        )
+    {
         return;
     }
     let (mut items, secs) = app.playlist();
@@ -626,6 +640,91 @@ fn metric_combo(ui: &mut egui::Ui, id: &str, metric: &mut Metric, choices: Choic
             }
         });
     *metric != before
+}
+
+/// Music bars: their layout, color and how many.
+fn music(app: &mut App, ui: &mut egui::Ui) {
+    let p = Palette::of(ui.ctx());
+    let SceneConfig::Music {
+        mut style,
+        color,
+        mut rainbow,
+        mut bars,
+    } = app.music_scene.clone()
+    else {
+        return;
+    };
+    let mut rgb = color.0;
+    let mut changed = false;
+
+    section(ui, "Bars");
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new("Style").color(p.muted));
+        changed |= segmented(
+            ui,
+            &mut style,
+            &[
+                (BarStyleConfig::Bars, "Rising"),
+                (BarStyleConfig::Mirror, "Mirrored"),
+            ],
+        );
+    });
+    ui.add_space(6.0);
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new("How many").color(p.muted));
+        let slider = ui.add(egui::Slider::new(&mut bars, 8..=48).step_by(4.0));
+        changed |= slider.drag_stopped() || (slider.changed() && !slider.dragged());
+    });
+    ui.add_space(12.0);
+
+    section(ui, "Color");
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new("By pitch (rainbow)").color(p.text));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            changed |= toggle(ui, &mut rainbow).changed();
+        });
+    });
+    ui.add_space(6.0);
+    ui.add_enabled_ui(!rainbow, |ui| {
+        ui.horizontal(|ui| {
+            changed |= ui.color_edit_button_srgb(&mut rgb).changed();
+            ui.add_space(8.0);
+            for swatch in SWATCHES {
+                let (rect, response) = ui.allocate_exact_size(vec2(24.0, 24.0), Sense::click());
+                let fill = Color32::from_rgb(swatch[0], swatch[1], swatch[2]);
+                ui.painter().circle_filled(rect.center(), 10.0, fill);
+                let ring = if swatch == rgb { p.accent } else { p.border };
+                ui.painter()
+                    .circle_stroke(rect.center(), 11.5, Stroke::new(1.5, ring));
+                if response
+                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                    .clicked()
+                {
+                    rgb = swatch;
+                    changed = true;
+                }
+            }
+        });
+    });
+    ui.add_space(12.0);
+    ui.label(
+        egui::RichText::new(
+            "The bars follow whatever your speakers or headphones are playing. \
+             If the screen says NO AUDIO, check that PipeWire (pw-record) or \
+             PulseAudio (parec) is available.",
+        )
+        .small()
+        .color(p.faint),
+    );
+
+    if changed {
+        app.set_scene(SceneConfig::Music {
+            style,
+            color: Rgb(rgb),
+            rainbow,
+            bars,
+        });
+    }
 }
 
 fn multimedia(app: &mut App, ui: &mut egui::Ui) {
