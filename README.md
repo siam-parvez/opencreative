@@ -5,7 +5,8 @@
 
 Control the screen on your DeepCool LCD cooler from Linux: live system
 readings, images, GIFs, videos, YouTube and music bars. A free, open-source
-alternative to DeepCool's Windows-only DeepCreative app.
+alternative to DeepCool's Windows-only DeepCreative app, with displays from
+other brands (NZXT, Lian Li, ASUS and more) on the way.
 
 > OpenCreative is an independent project. It is not affiliated with or endorsed
 > by DeepCool. "DeepCool" and "DeepCreative" are trademarks of their owners.
@@ -32,28 +33,39 @@ Open **OpenCreative** from your app menu. The cooler is found automatically
 and its screen keeps running in the background, after restarts too. To
 update, install the new file the same way.
 
-## Features
+## On the cooler
 
-- **Live data**: CPU, GPU and RAM readings in three looks (Lines, HUD, Gauges)
-- **Pictures & video**: images, GIFs, videos and YouTube playlists, or a color
-- **Music**: bars that move with what's playing
-- **Top-bar menu**: switch modes, looks, brightness, colors and rotation
-- **Dashboard**: your computer's CPU, GPU, memory, storage and network
-- Dark and light themes, a choice of fonts, Zen mode (a calm clock)
+<table>
+  <tr>
+    <td align="center"><img src="docs/screenshots/skin-lines.png" alt="Lines" width="100%"><br><b>Lines</b></td>
+    <td align="center"><img src="docs/screenshots/skin-hud.png" alt="HUD" width="100%"><br><b>HUD</b></td>
+    <td align="center"><img src="docs/screenshots/skin-gauges.png" alt="Gauges" width="100%"><br><b>Gauges</b></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="docs/screenshots/screen-claude.png" alt="Claude usage" width="100%"><br><b>Claude usage</b></td>
+    <td align="center"><img src="docs/screenshots/screen-music.png" alt="Music, rainbow" width="100%"><br><b>Music, rainbow</b></td>
+    <td align="center"><img src="docs/screenshots/screen-music-mirror.png" alt="Music, mirrored" width="100%"><br><b>Music, mirrored</b></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="docs/screenshots/screen-zen.png" alt="Zen clock" width="100%"><br><b>Zen clock</b></td>
+    <td align="center"><img src="docs/screenshots/screen-light.png" alt="Light screens" width="100%"><br><b>Light screens</b></td>
+    <td align="center"><b>Your pictures, GIFs,<br>videos and YouTube</b><br>playlists, or one color</td>
+  </tr>
+</table>
+
+## In the app
 
 <p>
-  <img src="docs/screenshots/devices.png" alt="Devices page: the cooler pictured with its live screen" width="49%">
+  <img src="docs/screenshots/devices.png" alt="Devices: the cooler pictured with its live screen" width="49%">
   <img src="docs/screenshots/dashboard.png" alt="Dashboard: CPU, GPU, memory, storage and network" width="49%">
 </p>
 <p>
   <img src="docs/screenshots/device-light.png" alt="The editor in the light theme" width="55%">
   <img src="docs/screenshots/device-compact.png" alt="A smaller window: the sidebar folds to icons" width="44%">
 </p>
-<p>
-  <img src="docs/screenshots/skin-lines.png" alt="Lines skin" width="32%">
-  <img src="docs/screenshots/skin-hud.png" alt="HUD skin" width="32%">
-  <img src="docs/screenshots/skin-gauges.png" alt="Gauges skin" width="32%">
-</p>
+
+A top-bar menu switches modes, looks, brightness, colors and rotation
+without opening the window.
 
 **Optional:** YouTube downloads its helper (yt-dlp) the first time you add a
 link. CPU power readings are off by default
@@ -68,7 +80,8 @@ Anthropic).
 |---|---|---|
 | DeepCool LM240 / LM360 | `3633:0026` | 320 × 240 |
 
-Have another one? [Request support](https://github.com/siam-parvez/opencreative/issues/new?template=new-device.yml)
+Displays from NZXT, Lian Li, ASUS and other brands are planned. Have another
+one? [Request support](https://github.com/siam-parvez/opencreative/issues/new?template=new-device.yml)
 or see [adding a device](docs/adding-a-device.md).
 
 ## Help
@@ -164,9 +177,11 @@ New coolers implement `Display` in `opencreative-device`; nothing else changes.
 
 - [x] Desktop app, background service, Linux packages
 - [x] Images, GIFs, videos, YouTube and music bars
-- [ ] RGB control for motherboard and RAM lighting, synced to music (via OpenRGB)
-- [ ] Custom screen layouts, fonts and backgrounds
+- [ ] Displays from other brands: NZXT, Lian Li, ASUS and more
 - [ ] More DeepCool coolers: Mystique, LQ, LP, AK/LS/LD digital series
+- [ ] RGB lighting, written from scratch in Rust: motherboard, RAM, mic and
+      case fans, synced to music
+- [ ] Custom screen layouts, fonts and backgrounds
 - [ ] Windows and macOS (maybe, later)
 
 ## Credits
