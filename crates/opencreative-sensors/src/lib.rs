@@ -34,7 +34,8 @@ pub struct Snapshot {
     pub cpu_power_w: Option<f32>,
     /// The whole computer's power: the platform counter where there is one,
     /// else CPU package + memory + discrete GPU. An estimate either way (no
-    /// fans, drives or PSU losses).
+    /// fans, drives or PSU losses). `None` when only the CPU package can be
+    /// measured, since that alone would just repeat [`Self::cpu_power_w`].
     pub system_power_w: Option<f32>,
     pub gpu: Gpu,
     pub mem_used_pct: f32,
@@ -119,11 +120,7 @@ impl Sensors {
         if gpu.power_w.is_none() {
             gpu.power_w = watts.uncore;
         }
-        let system_power_w = watts.psys.or_else(|| {
-            watts
-                .package
-                .map(|p| p + watts.dram.unwrap_or(0.0) + discrete_w.unwrap_or(0.0))
-        });
+        let system_power_w = system_power(&watts, discrete_w);
 
         let (read, written) = self
             .real_disks()
@@ -239,5 +236,45 @@ impl Sensors {
 impl Default for Sensors {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// The whole computer's power, where there is more to it than the CPU
+/// package: the platform counter, or the package plus memory and a
+/// discrete GPU. With only the package it would just repeat CPU power.
+fn system_power(watts: &power::Watts, discrete_gpu_w: Option<f32>) -> Option<f32> {
+    if watts.psys.is_some() {
+        return watts.psys;
+    }
+    if watts.dram.is_none() && discrete_gpu_w.is_none() {
+        return None;
+    }
+    watts
+        .package
+        .map(|p| p + watts.dram.unwrap_or(0.0) + discrete_gpu_w.unwrap_or(0.0))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn system_power_needs_more_than_the_package() {
+        let package = power::Watts {
+            package: Some(20.0),
+            ..Default::default()
+        };
+        assert_eq!(system_power(&package, None), None);
+        assert_eq!(system_power(&package, Some(100.0)), Some(120.0));
+        let with_dram = power::Watts {
+            dram: Some(3.0),
+            ..package
+        };
+        assert_eq!(system_power(&with_dram, None), Some(23.0));
+        let platform = power::Watts {
+            psys: Some(70.0),
+            ..package
+        };
+        assert_eq!(system_power(&platform, Some(100.0)), Some(70.0));
     }
 }

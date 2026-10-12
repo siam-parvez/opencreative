@@ -103,7 +103,7 @@ fn cpu(ui: &mut egui::Ui, s: &Snapshot, samples: &[Snapshot]) {
                 (ghz(s.cpu_mhz as f32), "Frequency"),
                 (celsius(s.cpu_temp_c), "Temperature"),
                 (watts(s.cpu_power_w), "Power"),
-                (watts(s.system_power_w), "PC power (est.)"),
+                (pc_watts(s), "PC power (est.)"),
             ],
         );
     });
@@ -433,6 +433,15 @@ fn ghz(mhz: f32) -> String {
 /// Power readings turns them on).
 fn watts(w: Option<f32>) -> String {
     w.map_or("—".to_owned(), |w| format!("{w:.0} W"))
+}
+
+/// "N/A" when the CPU is measured but nothing else is: this PC has no
+/// whole-system sensor, and the package alone would just repeat CPU power.
+fn pc_watts(s: &Snapshot) -> String {
+    match (s.system_power_w, s.cpu_power_w) {
+        (None, Some(_)) => "N/A".to_owned(),
+        (w, _) => watts(w),
+    }
 }
 
 fn celsius(c: Option<f32>) -> String {

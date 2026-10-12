@@ -9,6 +9,7 @@ use opencreative_config::{FitConfig, Metric, Rgb, SceneConfig, SkinConfig};
 use opencreative_render::panels::Layout;
 
 use crate::icons::{self, Icon};
+use crate::library::MediaKind;
 use crate::theme::{self, Palette};
 use crate::widgets::{section, segmented, toggle};
 use crate::{App, Page, is_digital};
@@ -21,12 +22,6 @@ const MAX_PREVIEW_ZOOM: f32 = 2.0;
 enum Mode {
     Digital,
     Multimedia,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-enum Source {
-    Media,
-    Color,
 }
 
 /// One-click layouts, like the vendor app's "recommended combinations".
@@ -350,6 +345,15 @@ fn digital(app: &mut App, ui: &mut egui::Ui) {
             interval_secs,
         } => {
             let claude = app.prefs.claude_usage;
+            // With only the CPU package measurable, PC power reads "--".
+            let no_pc_power = app
+                .history
+                .latest()
+                .is_some_and(|s| s.system_power_w.is_none() && s.cpu_power_w.is_some());
+            let choices = Choices {
+                claude,
+                no_pc_power,
+            };
             section(ui, "Display data");
             let mut changed = false;
             egui::Grid::new("display-data")
@@ -357,16 +361,16 @@ fn digital(app: &mut App, ui: &mut egui::Ui) {
                 .spacing(vec2(16.0, 8.0))
                 .show(ui, |ui| {
                     ui.label(egui::RichText::new("Main reading").color(p.muted));
-                    changed |= metric_combo(ui, "primary", &mut primary, claude);
+                    changed |= metric_combo(ui, "primary", &mut primary, choices);
                     ui.end_row();
                     ui.label(egui::RichText::new("Second reading").color(p.muted));
-                    changed |= metric_combo(ui, "secondary-1", &mut secondary[0], claude);
+                    changed |= metric_combo(ui, "secondary-1", &mut secondary[0], choices);
                     ui.end_row();
                     ui.label(egui::RichText::new("Third reading").color(p.muted));
                     // The HUD skin charts network traffic in that spot instead.
                     let shown = skin != SkinConfig::Hud;
                     ui.add_enabled_ui(shown, |ui| {
-                        changed |= metric_combo(ui, "secondary-2", &mut secondary[1], claude);
+                        changed |= metric_combo(ui, "secondary-2", &mut secondary[1], choices);
                     })
                     .response
                     .on_disabled_hover_text("The HUD skin shows network speeds here.");
@@ -441,10 +445,24 @@ impl Look {
 pub struct SkinThumbs {
     rendered: Option<Instant>,
     textures: Vec<egui::TextureHandle>,
+    /// The size they were rendered for, in points.
+    size: egui::Vec2,
 }
 
 const THUMB_REFRESH: Duration = Duration::from_secs(2);
+/// The largest thumbnail; they shrink to keep the gallery on one row.
 const THUMB_SIZE: egui::Vec2 = vec2(176.0, 132.0);
+/// Each card's margin and border around its thumbnail.
+const THUMB_CHROME: f32 = 2.0 * 8.0 + 2.0 * 2.0;
+
+/// The thumbnail size that fits every look side by side in `width`.
+fn thumb_size(width: f32, gap: f32) -> egui::Vec2 {
+    let n = Look::ALL.len() as f32;
+    let w = ((width - gap * (n - 1.0)) / n - THUMB_CHROME)
+        .clamp(80.0, THUMB_SIZE.x)
+        .floor();
+    vec2(w, (w * THUMB_SIZE.y / THUMB_SIZE.x).round())
+}
 
 /// Shows each look with the user's readings; returns the scene to switch to
 /// when one is clicked.
@@ -470,7 +488,8 @@ fn skin_gallery(
         ),
         _ => (Look::Gauges, default_layout()),
     };
-    refresh_thumbs(app, ui.ctx(), &layout);
+    let size = thumb_size(ui.available_width(), ui.spacing().item_spacing.x);
+    refresh_thumbs(app, ui.ctx(), &layout, size);
 
     let mut picked = None;
     ui.horizontal_wrapped(|ui| {
@@ -487,9 +506,9 @@ fn skin_gallery(
                 .inner_margin(8)
                 .show(ui, |ui| {
                     // Keep each card as narrow as its thumbnail.
-                    ui.set_max_width(THUMB_SIZE.x);
+                    ui.set_max_width(size.x);
                     ui.vertical_centered(|ui| {
-                        ui.add(egui::Image::new((texture.id(), THUMB_SIZE)).corner_radius(6));
+                        ui.add(egui::Image::new((texture.id(), size)).corner_radius(6));
                         ui.label(egui::RichText::new(look.name()).color(if selected {
                             p.accent
                         } else {
@@ -527,12 +546,12 @@ fn default_layout() -> Layout {
     }
 }
 
-fn refresh_thumbs(app: &mut App, ctx: &egui::Context, layout: &Layout) {
+fn refresh_thumbs(app: &mut App, ctx: &egui::Context, layout: &Layout, size: egui::Vec2) {
     let thumbs = &mut app.skin_thumbs;
     let fresh = thumbs
         .rendered
         .is_some_and(|at| at.elapsed() < THUMB_REFRESH);
-    if fresh && thumbs.textures.len() == Look::ALL.len() {
+    if fresh && thumbs.size == size && thumbs.textures.len() == Look::ALL.len() {
         return;
     }
     let snap = app.history.latest().cloned().unwrap_or_default();
@@ -540,10 +559,7 @@ fn refresh_thumbs(app: &mut App, ctx: &egui::Context, layout: &Layout) {
     let clock = chrono::Local::now().format("%H:%M").to_string();
     // Render at the thumbnail's exact pixel size so nothing is resampled.
     let ppp = ctx.pixels_per_point();
-    let (w, h) = (
-        (THUMB_SIZE.x * ppp).round() as u32,
-        (THUMB_SIZE.y * ppp).round() as u32,
-    );
+    let (w, h) = ((size.x * ppp).round() as u32, (size.y * ppp).round() as u32);
     let images: Vec<_> = Look::ALL
         .into_iter()
         .map(|look| {
@@ -570,18 +586,43 @@ fn refresh_thumbs(app: &mut App, ctx: &egui::Context, layout: &Layout) {
             .collect();
     }
     thumbs.rendered = Some(Instant::now());
+    thumbs.size = size;
     ctx.request_repaint_after(THUMB_REFRESH);
 }
 
-fn metric_combo(ui: &mut egui::Ui, id: &str, metric: &mut Metric, claude: bool) -> bool {
+/// What the reading pickers offer.
+#[derive(Clone, Copy)]
+struct Choices {
+    /// Claude readings, when the integration is turned on.
+    claude: bool,
+    /// This PC has no whole-system power sensor.
+    no_pc_power: bool,
+}
+
+fn metric_combo(ui: &mut egui::Ui, id: &str, metric: &mut Metric, choices: Choices) -> bool {
     let before = *metric;
+    let name = |m: Metric| {
+        if m == Metric::SystemPower && choices.no_pc_power {
+            "PC power (not measurable here)"
+        } else {
+            m.name()
+        }
+    };
     egui::ComboBox::from_id_salt(id)
         .width(220.0)
-        .selected_text(metric.name())
+        .selected_text(name(*metric))
         .show_ui(ui, |ui| {
-            // Claude readings only when the integration is turned on.
-            for m in Metric::ALL.into_iter().filter(|m| claude || !m.is_claude()) {
-                ui.selectable_value(metric, m, m.name());
+            for m in Metric::ALL
+                .into_iter()
+                .filter(|m| choices.claude || !m.is_claude())
+            {
+                let option = ui.selectable_value(metric, m, name(m));
+                if m == Metric::SystemPower && choices.no_pc_power {
+                    option.on_hover_text(
+                        "This PC has no whole-system power sensor (RAPL psys), no memory \
+                         counter and no discrete GPU, so only CPU power can be measured.",
+                    );
+                }
             }
         });
     *metric != before
@@ -590,32 +631,27 @@ fn metric_combo(ui: &mut egui::Ui, id: &str, metric: &mut Metric, claude: bool) 
 fn multimedia(app: &mut App, ui: &mut egui::Ui) {
     let p = Palette::of(ui.ctx());
     let scene = app.applied.scene.clone();
-    let mut source = if matches!(scene, SceneConfig::Solid { .. }) {
-        Source::Color
-    } else {
-        Source::Media
-    };
 
     section(ui, "Source");
-    if segmented(
-        ui,
-        &mut source,
-        &[
-            (Source::Media, "Images and video"),
-            (Source::Color, "Color"),
-        ],
-    ) {
-        match source {
-            Source::Color => app.set_scene(SceneConfig::Solid {
+    let mut tab = app.media_tab;
+    let mut tabs: Vec<(Option<MediaKind>, &str)> = MediaKind::ALL
+        .iter()
+        .map(|k| (Some(*k), k.name()))
+        .collect();
+    tabs.push((None, "Color"));
+    if segmented(ui, &mut tab, &tabs) {
+        app.switch_media_tab(tab);
+        match tab {
+            None => app.set_scene(SceneConfig::Solid {
                 color: Rgb(SWATCHES[0]),
             }),
-            Source::Media => {
+            Some(kind) => {
                 let (items, secs) = app.playlist();
-                if items.is_empty() {
-                    let ctx = ui.ctx().clone();
-                    app.browse_for_media(&ctx);
-                } else {
+                if !items.is_empty() {
                     app.set_playlist(items, secs, false);
+                } else if kind != MediaKind::Youtube {
+                    let ctx = ui.ctx().clone();
+                    app.browse_for_media(&ctx, kind);
                 }
             }
         }
@@ -623,13 +659,15 @@ fn multimedia(app: &mut App, ui: &mut egui::Ui) {
     }
     ui.add_space(10.0);
 
-    if let SceneConfig::Solid { color } = scene {
-        let mut rgb = color.0;
+    let Some(kind) = app.media_tab else {
+        let rgb = match scene {
+            SceneConfig::Solid { color } => color.0,
+            _ => SWATCHES[0],
+        };
+        let mut picked = rgb;
         ui.horizontal(|ui| {
             ui.label(egui::RichText::new("Color").color(p.muted));
-            if ui.color_edit_button_srgb(&mut rgb).changed() {
-                app.set_scene(SceneConfig::Solid { color: Rgb(rgb) });
-            }
+            ui.color_edit_button_srgb(&mut picked);
             ui.add_space(8.0);
             for swatch in SWATCHES {
                 let (rect, response) = ui.allocate_exact_size(vec2(24.0, 24.0), Sense::click());
@@ -642,42 +680,45 @@ fn multimedia(app: &mut App, ui: &mut egui::Ui) {
                     .on_hover_cursor(egui::CursorIcon::PointingHand)
                     .clicked()
                 {
-                    app.set_scene(SceneConfig::Solid { color: Rgb(swatch) });
+                    picked = swatch;
                 }
             }
         });
+        if picked != rgb {
+            app.set_scene(SceneConfig::Solid { color: Rgb(picked) });
+        }
         return;
-    }
-    playlist(app, ui);
+    };
+    playlist(app, ui, kind);
 }
 
 /// The playlist: one row per item, the selected item's fit and zoom, how
 /// long each shows, and ways to add more.
-fn playlist(app: &mut App, ui: &mut egui::Ui) {
+fn playlist(app: &mut App, ui: &mut egui::Ui, kind: MediaKind) {
     let p = Palette::of(ui.ctx());
     let ctx = ui.ctx().clone();
     let (mut items, mut secs) = app.playlist();
     if items.is_empty() {
-        drop_zone(app, ui);
-        ui.add_space(10.0);
-        add_url_row(app, ui);
+        if kind == MediaKind::Youtube {
+            add_url_row(app, ui);
+        } else {
+            drop_zone(app, ui, kind);
+        }
         return;
     }
     app.selected_item = app.selected_item.min(items.len() - 1);
+    app.selection.retain(|&i| i < items.len());
 
     // Row actions are applied after the loop.
     let mut action = None;
+    let modifiers = ui.input(|i| i.modifiers);
     for (i, item) in items.iter().enumerate() {
-        let selected = i == app.selected_item;
+        let lit = i == app.selected_item || app.selection.contains(&i);
         let frame = egui::Frame::new()
-            .fill(if selected {
-                p.raised
-            } else {
-                Color32::TRANSPARENT
-            })
+            .fill(if lit { p.raised } else { Color32::TRANSPARENT })
             .stroke(Stroke::new(
                 1.0,
-                if selected {
+                if lit {
                     p.accent.gamma_multiply(0.5)
                 } else {
                     p.border
@@ -688,24 +729,18 @@ fn playlist(app: &mut App, ui: &mut egui::Ui) {
         let row = frame.show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.horizontal(|ui| {
-                let kind = if item.url.is_some() {
-                    Icon::Link
-                } else if item
-                    .path
-                    .as_deref()
-                    .is_some_and(opencreative_render::media::is_video_path)
-                {
-                    Icon::Film
-                } else {
-                    Icon::Image
+                let icon = match kind {
+                    MediaKind::Youtube => Icon::Link,
+                    MediaKind::Video => Icon::Film,
+                    MediaKind::Image | MediaKind::Gif => Icon::Image,
                 };
-                icons::show(ui, kind, 16.0, if selected { p.accent } else { p.muted });
+                icons::show(ui, icon, 16.0, if lit { p.accent } else { p.muted });
                 ui.add(
                     egui::Label::new(egui::RichText::new(item.label()).color(p.text)).truncate(),
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if icon_button(ui, Icon::Trash, "Take out of the playlist").clicked() {
-                        action = Some(RowAction::TakeOut(i));
+                        action = Some(RowAction::TakeOut(vec![i]));
                     }
                     if i + 1 < items.len() && icon_button(ui, Icon::Down, "Move down").clicked() {
                         action = Some(RowAction::Swap(i, i + 1));
@@ -721,45 +756,96 @@ fn playlist(app: &mut App, ui: &mut egui::Ui) {
             .on_hover_cursor(egui::CursorIcon::PointingHand)
             .clicked()
         {
-            app.selected_item = i;
+            pick_row(app, i, modifiers);
         }
         ui.add_space(4.0);
     }
-    match action {
-        Some(RowAction::TakeOut(i)) => {
-            items.remove(i);
-            if items.is_empty() {
-                return app.set_scene(SceneConfig::Solid {
-                    color: Rgb(SWATCHES[0]),
-                });
+
+    // Ctrl+A picks every row and Delete takes the picked ones out, unless
+    // a text field (the link box) has the keyboard.
+    let typing = ctx.egui_wants_keyboard_input();
+    if !typing {
+        let (all, delete) = ui.input_mut(|i| {
+            (
+                i.consume_key(egui::Modifiers::COMMAND, egui::Key::A),
+                i.consume_key(egui::Modifiers::NONE, egui::Key::Delete),
+            )
+        });
+        if all {
+            app.selection = (0..items.len()).collect();
+        }
+        if delete {
+            action = Some(RowAction::TakeOut(picked_rows(app)));
+        }
+    }
+
+    if app.selection.len() > 1 {
+        ui.horizontal(|ui| {
+            ui.label(
+                egui::RichText::new(format!("{} selected", app.selection.len())).color(p.text),
+            );
+            if ui.button("Remove selected").clicked() {
+                action = Some(RowAction::TakeOut(picked_rows(app)));
             }
+            if ui.button("Clear selection").clicked() {
+                app.selection.clear();
+            }
+        });
+    } else {
+        ui.label(
+            egui::RichText::new("Ctrl-click or Shift-click to select several, then press Delete.")
+                .small()
+                .color(p.faint),
+        );
+    }
+
+    match action {
+        Some(RowAction::TakeOut(rows)) => {
+            for &i in rows.iter().rev() {
+                items.remove(i);
+            }
+            let before = rows.iter().filter(|&&i| i < app.selected_item).count();
+            app.selected_item = app.selected_item.saturating_sub(before);
+            app.selection.clear();
             return app.set_playlist(items, secs, false);
         }
         Some(RowAction::Swap(a, b)) => {
             items.swap(a, b);
             app.selected_item = if app.selected_item == a { b } else { a };
+            let (had_a, had_b) = (app.selection.remove(&a), app.selection.remove(&b));
+            if had_a {
+                app.selection.insert(b);
+            }
+            if had_b {
+                app.selection.insert(a);
+            }
             return app.set_playlist(items, secs, false);
         }
         None => {}
     }
 
     ui.add_space(6.0);
-    ui.horizontal(|ui| {
-        let browsing = app.picking_file.is_some();
-        if ui
-            .add_enabled(!browsing, egui::Button::new("Add files…"))
-            .clicked()
-        {
-            app.browse_for_media(&ctx);
-        }
-        ui.label(
-            egui::RichText::new("or drop them on the window")
-                .small()
-                .color(p.faint),
-        );
-    });
-    ui.add_space(6.0);
-    add_url_row(app, ui);
+    if kind == MediaKind::Youtube {
+        add_url_row(app, ui);
+    } else {
+        ui.horizontal(|ui| {
+            let browsing = app.picking_file.is_some();
+            if ui
+                .add_enabled(
+                    !browsing,
+                    egui::Button::new(format!("Add {}…", kind.noun(2))),
+                )
+                .clicked()
+            {
+                app.browse_for_media(&ctx, kind);
+            }
+            ui.label(
+                egui::RichText::new("or drop them on the window")
+                    .small()
+                    .color(p.faint),
+            );
+        });
+    }
 
     // The selected item's fit and crop.
     ui.add_space(12.0);
@@ -821,11 +907,45 @@ fn playlist(app: &mut App, ui: &mut egui::Ui) {
     } else if draft {
         app.set_playlist(items.clone(), secs, true);
     }
-    tool_notices(app, ui, &items);
+    tool_notices(app, ui, kind);
+}
+
+/// A click on row `i`: plain picks just it, Ctrl toggles it, Shift picks
+/// the range from the focused row.
+fn pick_row(app: &mut App, i: usize, modifiers: egui::Modifiers) {
+    if modifiers.shift {
+        let (a, b) = (app.selected_item.min(i), app.selected_item.max(i));
+        if !modifiers.command {
+            app.selection.clear();
+        }
+        app.selection.extend(a..=b);
+    } else if modifiers.command {
+        if app.selection.is_empty() {
+            app.selection.insert(app.selected_item);
+        }
+        if !app.selection.remove(&i) {
+            app.selection.insert(i);
+        }
+        app.selected_item = i;
+    } else {
+        app.selection.clear();
+        app.selected_item = i;
+    }
+}
+
+/// The rows Delete or "Remove selected" takes out, in order: the picked
+/// ones, or else the focused one.
+fn picked_rows(app: &App) -> Vec<usize> {
+    if app.selection.is_empty() {
+        vec![app.selected_item]
+    } else {
+        app.selection.iter().copied().collect()
+    }
 }
 
 enum RowAction {
-    TakeOut(usize),
+    /// Rows to take out, in ascending order.
+    TakeOut(Vec<usize>),
     Swap(usize, usize),
 }
 
@@ -859,16 +979,11 @@ fn add_url_row(app: &mut App, ui: &mut egui::Ui) {
 }
 
 /// Explains missing helper programs for videos and web links.
-fn tool_notices(app: &mut App, ui: &mut egui::Ui, items: &[opencreative_config::MediaItem]) {
+fn tool_notices(app: &mut App, ui: &mut egui::Ui, kind: MediaKind) {
     use opencreative_render::video::tool;
     let p = Palette::of(ui.ctx());
-    let has_video = items.iter().any(|i| {
-        i.url.is_some()
-            || i.path
-                .as_deref()
-                .is_some_and(opencreative_render::media::is_video_path)
-    });
-    let has_url = items.iter().any(|i| i.url.is_some());
+    let has_video = matches!(kind, MediaKind::Video | MediaKind::Youtube);
+    let has_url = kind == MediaKind::Youtube;
     let notice = |ui: &mut egui::Ui, text: &str| {
         ui.add_space(10.0);
         ui.horizontal_wrapped(|ui| {
@@ -904,9 +1019,15 @@ fn tool_notices(app: &mut App, ui: &mut egui::Ui, items: &[opencreative_config::
     }
 }
 
-fn drop_zone(app: &mut App, ui: &mut egui::Ui) {
+fn drop_zone(app: &mut App, ui: &mut egui::Ui, kind: MediaKind) {
     let p = Palette::of(ui.ctx());
     let ctx = ui.ctx().clone();
+    let formats = kind
+        .extensions()
+        .iter()
+        .map(|e| e.to_ascii_uppercase())
+        .collect::<Vec<_>>()
+        .join(", ");
     egui::Frame::new()
         .fill(p.accent_soft)
         .stroke(Stroke::new(1.0, p.accent.gamma_multiply(0.6)))
@@ -917,15 +1038,13 @@ fn drop_zone(app: &mut App, ui: &mut egui::Ui) {
             ui.vertical_centered(|ui| {
                 icons::show(ui, Icon::Upload, 26.0, p.accent);
                 ui.label(
-                    egui::RichText::new("Drop images, GIFs or videos anywhere on this window")
+                    egui::RichText::new(format!("Drop {} anywhere on this window", kind.noun(2)))
                         .color(p.text),
                 );
                 ui.label(
-                    egui::RichText::new(
-                        "PNG, JPEG, WebP, BMP, GIF, MP4, WebM, MKV… Several play one after another.",
-                    )
-                    .small()
-                    .color(p.muted),
+                    egui::RichText::new(format!("{formats}. Several play one after another."))
+                        .small()
+                        .color(p.muted),
                 );
                 ui.add_space(4.0);
                 let browsing = app.picking_file.is_some();
@@ -933,7 +1052,7 @@ fn drop_zone(app: &mut App, ui: &mut egui::Ui) {
                     .add_enabled(!browsing, egui::Button::new("Browse…"))
                     .clicked()
                 {
-                    app.browse_for_media(&ctx);
+                    app.browse_for_media(&ctx, kind);
                 }
             });
         });
@@ -982,6 +1101,15 @@ mod tests {
         };
         set_interval(&mut solid, 2.5);
         assert_eq!(interval(&solid), None);
+    }
+
+    #[test]
+    fn thumbnails_shrink_to_fit_one_row() {
+        let wide = thumb_size(2000.0, 10.0);
+        assert_eq!(wide, THUMB_SIZE);
+        let narrow = thumb_size(540.0, 10.0);
+        let row = 3.0 * (narrow.x + THUMB_CHROME) + 2.0 * 10.0;
+        assert!(row <= 540.0, "{row}");
     }
 
     #[test]
