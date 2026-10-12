@@ -7,8 +7,12 @@ here's what helps, from most to least important.
 
 ## 1. Who you are and what you have (5 minutes, Linux)
 
-Open a [new device issue](https://github.com/siam-parvez/opencreative/issues/new?template=new-device.yml)
-with:
+The easiest way: in OpenCreative, open **Devices → Request support for your
+cooler**. It opens the form on GitHub with your cooler's USB details already
+filled in; add the model name and you're done.
+
+Or open a [new device issue](https://github.com/siam-parvez/opencreative/issues/new?template=new-device.yml)
+yourself with:
 
 - **The exact model** from the box (e.g. "LQ360 White").
 - **`lsusb`**: the line with `DeepCool` or ID `3633:xxxx`.

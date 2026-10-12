@@ -224,6 +224,26 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         });
     }
 
+    group(ui, "Help & feedback", |ui| {
+        ui.label(
+            egui::RichText::new(
+                "Opens a form on GitHub (a free account is needed) with your OpenCreative \
+                 version, Linux version and cooler already filled in. You see everything \
+                 before it's sent.",
+            )
+            .color(p.muted),
+        );
+        ui.add_space(8.0);
+        ui.horizontal_wrapped(|ui| {
+            if ui.button("Report a problem").clicked() {
+                ctx.open_url(egui::OpenUrl::new_tab(crate::feedback::problem_url(app)));
+            }
+            if ui.button("Request support for your cooler").clicked() {
+                ctx.open_url(egui::OpenUrl::new_tab(crate::feedback::device_url(app)));
+            }
+        });
+    });
+
     group(ui, "About", |ui| {
         ui.label(
             egui::RichText::new(format!("OpenCreative {}", env!("CARGO_PKG_VERSION")))

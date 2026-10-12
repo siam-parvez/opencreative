@@ -175,13 +175,14 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 .color(p.muted),
             );
         }
-        ui.label(
-            egui::RichText::new(
-                "Another DeepCool cooler? See \"Adding a device\" in the README to help add it.",
-            )
-            .small()
-            .color(p.faint),
-        );
+        ui.add_space(6.0);
+        ui.horizontal_wrapped(|ui| {
+            ui.label(egui::RichText::new("Have another DeepCool cooler?").color(p.muted));
+            if ui.button("Request support for your cooler").clicked() {
+                let url = crate::feedback::device_url(app);
+                ui.ctx().open_url(egui::OpenUrl::new_tab(url));
+            }
+        });
     });
     ui.add_space(24.0);
 }

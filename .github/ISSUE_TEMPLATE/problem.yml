@@ -1,0 +1,45 @@
+name: Report a problem
+description: Something doesn't work or looks wrong.
+title: ""
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Sorry something went wrong! A few sentences are plenty.
+        If you came here from the app (**Settings → Report a problem**), your system
+        details are already filled in at the bottom.
+  - type: textarea
+    id: what
+    attributes:
+      label: What went wrong?
+      placeholder: e.g. The cooler screen stays black after I pick a GIF.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: What were you doing when it happened?
+      placeholder: |
+        1. Opened Cooler screen → Multimedia → GIFs
+        2. Added a GIF
+        3. The preview shows it, the cooler doesn't
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect instead? (optional)
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Screenshots or photos (optional)
+      description: Drag images here. A photo of the cooler's screen helps for display problems.
+  - type: textarea
+    id: system
+    attributes:
+      label: Your system
+      description: |
+        Filled in by the app. Otherwise, paste the output of `opencreative status`
+        and say which Linux you use and how you installed OpenCreative.
+      render: text
+    validations:
+      required: true

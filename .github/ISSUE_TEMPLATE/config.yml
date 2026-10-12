@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: How to add a new cooler (guide)
+    url: https://github.com/siam-parvez/opencreative/blob/main/docs/adding-a-device.md
+    about: What we need from you to support a DeepCool cooler OpenCreative doesn't know yet.
