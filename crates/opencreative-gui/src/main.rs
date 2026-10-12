@@ -515,7 +515,8 @@ impl App {
 
     /// No daemon is running: run one here so the device still has an owner.
     fn start_embedded(&mut self) {
-        match opencreative_daemon::spawn(None) {
+        // No top-bar icon: this daemon only lives while the window is open.
+        match opencreative_daemon::spawn(None, false) {
             Ok(daemon) => {
                 self.embedded = Some(daemon);
                 self.link = Link::Embedded;
