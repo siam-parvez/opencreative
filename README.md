@@ -64,6 +64,8 @@ new version by itself and keeps your settings.
   playing, rising or mirrored, in one color or a rainbow by pitch.
 - **Display**: brightness, rotation for any pump orientation, and Zen mode (a
   calm clock).
+- **Your look**: dark or light theme, and a choice of app fonts (Inter,
+  Geist, Manrope, IBM Plex Sans).
 - **Dashboard**: this computer's CPU, GPU, memory, storage and network at a
   glance, with a two-minute history.
 - The preview in the app shows exactly what's on the cooler, frame for frame.
@@ -213,9 +215,9 @@ New coolers implement `Display` in `opencreative-device`; nothing else changes.
 - Device pictures in `assets/devices/` are DeepCool's product images, used to
   identify the hardware; they remain DeepCool's property.
 - Protocol captures: [daedlock/deepcool-lm](https://github.com/daedlock/deepcool-lm) (MIT)
-- Fonts: [Rajdhani](https://fonts.google.com/specimen/Rajdhani) by Indian Type Foundry, [Orbitron](https://github.com/theleagueof/orbitron) by The League of Moveable Type, and [IBM Plex Sans](https://github.com/IBM/plex) by IBM (SIL OFL 1.1)
+- Fonts (SIL OFL 1.1): [Rajdhani](https://fonts.google.com/specimen/Rajdhani) by Indian Type Foundry and [Orbitron](https://github.com/theleagueof/orbitron) by The League of Moveable Type on the cooler screen; [Inter](https://github.com/rsms/inter), [Geist](https://github.com/vercel/geist-font), [Manrope](https://github.com/googlefonts/manrope) and [IBM Plex Sans](https://github.com/IBM/plex) in the app.
 
 ## License
 
 Dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your option.
-Bundled fonts are under the SIL Open Font License: [Rajdhani](assets/fonts/OFL-Rajdhani.txt) and [Orbitron](assets/fonts/OFL-Orbitron.txt) (screen), [IBM Plex Sans](assets/fonts/OFL-IBMPlexSans.txt) (app).
+Bundled fonts are under the SIL Open Font License: [Rajdhani](assets/fonts/OFL-Rajdhani.txt) and [Orbitron](assets/fonts/OFL-Orbitron.txt) (screen); [Inter](assets/fonts/OFL-Inter.txt), [Geist](assets/fonts/OFL-Geist.txt), [Manrope](assets/fonts/OFL-Manrope.txt) and [IBM Plex Sans](assets/fonts/OFL-IBMPlexSans.txt) (app).
