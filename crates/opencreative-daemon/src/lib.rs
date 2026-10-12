@@ -246,8 +246,17 @@ impl Shared {
                 None => return error(format!("rotation must be 0, 90, 180 or 270, not {degrees}")),
             },
             // Session state, not a setting: the screen is on after a restart.
-            Request::SetScreen { on } => Command::SetScreen(on),
-            Request::SetZen { on } => Command::SetZen(on),
+            // Recorded now as well as by the playback thread, so a status or
+            // menu refresh in between doesn't show the old value and make
+            // the top-bar menu's checkmarks flicker.
+            Request::SetScreen { on } => {
+                self.state.lock().expect("state lock").screen_on = on;
+                Command::SetScreen(on)
+            }
+            Request::SetZen { on } => {
+                self.state.lock().expect("state lock").zen = on;
+                Command::SetZen(on)
+            }
             Request::SetScreenTheme { theme } => {
                 config.screen_theme = theme;
                 Command::SetShade(theme.into())

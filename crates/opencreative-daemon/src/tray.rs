@@ -10,15 +10,16 @@ use std::sync::{Arc, OnceLock};
 use std::thread;
 
 use ksni::blocking::{Handle, TrayMethods as _};
-use ksni::menu::{CheckmarkItem, RadioGroup, RadioItem, StandardItem, SubMenu};
+use ksni::menu::{CheckmarkItem, RadioGroup, RadioItem, StandardItem};
 use ksni::{Icon, MenuItem, ToolTip};
 use opencreative_config::{SceneConfig, SceneKind, ScreenTheme, SkinConfig};
 use opencreative_ipc::Request;
 
 use crate::Shared;
 
-/// Brightness steps offered in the menu.
-const BRIGHTNESS: [u8; 5] = [10, 25, 50, 75, 100];
+/// Brighter and Dimmer move in these steps, down to this level.
+const BRIGHTNESS_STEP: u8 = 10;
+const BRIGHTNESS_MIN: u8 = 10;
 /// The app's three modes, as the menu lists them.
 const KINDS: [(SceneKind, &str); 3] = [
     (SceneKind::Digital, "Live data"),
@@ -31,7 +32,6 @@ const LOOKS: [(Look, &str); 3] = [
     (Look::Skin(SkinConfig::Hud), "HUD"),
     (Look::Gauges, "Gauges"),
 ];
-const ROTATIONS: [u16; 4] = [0, 90, 180, 270];
 
 /// A live-data look: one of the Panels skins, or the gauges.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -201,14 +201,14 @@ impl ksni::Tray for CoolerTray {
         open_app();
     }
 
+    /// One flat list: the desktop closes the menu after every click and
+    /// redraws submenus as they open, so each change is a single click on
+    /// an item that never moves.
     fn menu(&self) -> Vec<MenuItem<Self>> {
         let view = &self.view;
-        let selected = BRIGHTNESS
-            .iter()
-            .enumerate()
-            .min_by_key(|(_, b)| b.abs_diff(view.brightness))
-            .map_or(0, |(i, _)| i);
-        vec![
+        let connected = view.device.is_some();
+        let live = view.kind == SceneKind::Digital;
+        let mut items: Vec<MenuItem<Self>> = vec![
             StandardItem {
                 label: "Open OpenCreative".into(),
                 activate: Box::new(|_: &mut Self| open_app()),
@@ -225,42 +225,37 @@ impl ksni::Tray for CoolerTray {
                     .iter()
                     .map(|(_, label)| RadioItem {
                         label: (*label).into(),
-                        enabled: view.device.is_some(),
+                        enabled: connected,
                         ..Default::default()
                     })
                     .collect(),
             }
             .into(),
-            SubMenu {
-                label: "Look".into(),
-                enabled: view.device.is_some() && view.kind == SceneKind::Digital,
-                submenu: vec![
-                    RadioGroup {
-                        selected: LOOKS
-                            .iter()
-                            .position(|(l, _)| Some(*l) == view.look)
-                            .unwrap_or(0),
-                        select: Box::new(|tray: &mut Self, i| {
-                            tray.show_look(LOOKS[i.min(LOOKS.len() - 1)].0);
-                        }),
-                        options: LOOKS
-                            .iter()
-                            .map(|(_, label)| RadioItem {
-                                label: (*label).into(),
-                                ..Default::default()
-                            })
-                            .collect(),
-                    }
-                    .into(),
-                ],
-                ..Default::default()
+            MenuItem::Separator,
+            // The live-data looks stay in place, greyed out in other modes.
+            RadioGroup {
+                selected: LOOKS
+                    .iter()
+                    .position(|(l, _)| Some(*l) == view.look)
+                    .unwrap_or(0),
+                select: Box::new(|tray: &mut Self, i| {
+                    tray.show_look(LOOKS[i.min(LOOKS.len() - 1)].0);
+                }),
+                options: LOOKS
+                    .iter()
+                    .map(|(_, label)| RadioItem {
+                        label: (*label).into(),
+                        enabled: connected && live,
+                        ..Default::default()
+                    })
+                    .collect(),
             }
             .into(),
             MenuItem::Separator,
             CheckmarkItem {
                 label: "Screen on".into(),
                 checked: view.screen_on,
-                enabled: view.device.is_some(),
+                enabled: connected,
                 activate: Box::new(|tray: &mut Self| {
                     let on = !tray.view.screen_on;
                     tray.apply(Request::SetScreen { on });
@@ -271,7 +266,7 @@ impl ksni::Tray for CoolerTray {
             CheckmarkItem {
                 label: "Zen mode".into(),
                 checked: view.zen,
-                enabled: view.device.is_some(),
+                enabled: connected,
                 activate: Box::new(|tray: &mut Self| {
                     let on = !tray.view.zen;
                     tray.apply(Request::SetZen { on });
@@ -279,80 +274,50 @@ impl ksni::Tray for CoolerTray {
                 ..Default::default()
             }
             .into(),
-            SubMenu {
-                label: "Brightness".into(),
-                enabled: view.device.is_some(),
-                submenu: vec![
-                    RadioGroup {
-                        selected,
-                        select: Box::new(|tray: &mut Self, i| {
-                            let percent = BRIGHTNESS[i.min(BRIGHTNESS.len() - 1)];
-                            tray.apply(Request::SetBrightness { percent });
-                        }),
-                        options: BRIGHTNESS
-                            .iter()
-                            .map(|b| RadioItem {
-                                label: format!("{b}%"),
-                                ..Default::default()
-                            })
-                            .collect(),
-                    }
-                    .into(),
-                ],
+        ];
+        items.extend([
+            StandardItem {
+                label: format!("Brighter ({}%)", view.brightness),
+                enabled: connected && view.brightness < 100,
+                activate: Box::new(|tray: &mut Self| {
+                    let percent = step_brightness(tray.view.brightness, true);
+                    tray.apply(Request::SetBrightness { percent });
+                }),
                 ..Default::default()
             }
             .into(),
-            SubMenu {
-                label: "Screen colors".into(),
+            StandardItem {
+                label: "Dimmer".into(),
+                enabled: connected && view.brightness > BRIGHTNESS_MIN,
+                activate: Box::new(|tray: &mut Self| {
+                    let percent = step_brightness(tray.view.brightness, false);
+                    tray.apply(Request::SetBrightness { percent });
+                }),
+                ..Default::default()
+            }
+            .into(),
+            CheckmarkItem {
+                label: "Light screen colors".into(),
+                checked: view.theme == ScreenTheme::Light,
                 // Pictures and videos keep their own colors.
-                enabled: view.device.is_some() && view.kind != SceneKind::Media,
-                submenu: vec![
-                    RadioGroup {
-                        selected: usize::from(view.theme == ScreenTheme::Light),
-                        select: Box::new(|tray: &mut Self, i| {
-                            let theme = if i == 1 {
-                                ScreenTheme::Light
-                            } else {
-                                ScreenTheme::Dark
-                            };
-                            tray.apply(Request::SetScreenTheme { theme });
-                        }),
-                        options: ["Dark", "Light"]
-                            .into_iter()
-                            .map(|label| RadioItem {
-                                label: label.into(),
-                                ..Default::default()
-                            })
-                            .collect(),
-                    }
-                    .into(),
-                ],
+                enabled: connected && view.kind != SceneKind::Media,
+                activate: Box::new(|tray: &mut Self| {
+                    let theme = match tray.view.theme {
+                        ScreenTheme::Dark => ScreenTheme::Light,
+                        ScreenTheme::Light => ScreenTheme::Dark,
+                    };
+                    tray.apply(Request::SetScreenTheme { theme });
+                }),
                 ..Default::default()
             }
             .into(),
-            SubMenu {
-                label: "Rotation".into(),
-                enabled: view.device.is_some(),
-                submenu: vec![
-                    RadioGroup {
-                        selected: ROTATIONS
-                            .iter()
-                            .position(|r| *r == view.rotation)
-                            .unwrap_or(0),
-                        select: Box::new(|tray: &mut Self, i| {
-                            let degrees = ROTATIONS[i.min(ROTATIONS.len() - 1)];
-                            tray.apply(Request::SetRotation { degrees });
-                        }),
-                        options: ROTATIONS
-                            .iter()
-                            .map(|r| RadioItem {
-                                label: format!("{r}°"),
-                                ..Default::default()
-                            })
-                            .collect(),
-                    }
-                    .into(),
-                ],
+            StandardItem {
+                label: format!("Rotate 90° (now {}°)", view.rotation),
+                enabled: connected,
+                activate: Box::new(|tray: &mut Self| {
+                    let degrees = (tray.view.rotation + 90) % 360;
+                    tray.apply(Request::SetRotation { degrees });
+                }),
                 ..Default::default()
             }
             .into(),
@@ -366,8 +331,19 @@ impl ksni::Tray for CoolerTray {
                 ..Default::default()
             }
             .into(),
-        ]
+        ]);
+        items
     }
+}
+
+/// The next brightness step up or down, in tens, never fully dark.
+fn step_brightness(now: u8, up: bool) -> u8 {
+    let step = if up {
+        (now / BRIGHTNESS_STEP + 1) * BRIGHTNESS_STEP
+    } else {
+        now.saturating_sub(1) / BRIGHTNESS_STEP * BRIGHTNESS_STEP
+    };
+    step.clamp(BRIGHTNESS_MIN, 100)
 }
 
 /// The one-color icon at tray sizes, white (top bars are dark), as ARGB32
@@ -418,5 +394,21 @@ fn open_app() {
                 .spawn(move || child.wait());
         }
         Err(e) => log::warn!("couldn't open {}: {e}", program.display()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn brightness_steps_in_tens_and_stays_lit() {
+        assert_eq!(step_brightness(50, true), 60);
+        assert_eq!(step_brightness(55, true), 60);
+        assert_eq!(step_brightness(100, true), 100);
+        assert_eq!(step_brightness(50, false), 40);
+        assert_eq!(step_brightness(55, false), 50);
+        assert_eq!(step_brightness(10, false), 10);
+        assert_eq!(step_brightness(0, true), 10);
     }
 }
