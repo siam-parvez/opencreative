@@ -14,8 +14,9 @@ use crate::theme::{self, Palette};
 use crate::widgets::{Swatch, card_look, pill, section, segmented, swatches};
 use crate::{App, Page, is_digital, is_music};
 
-/// The Customize panel beside the stage.
+/// The Customize panel beside the stage, and the space between them.
 const PANEL_WIDTH: f32 = 300.0;
+const PANEL_GAP: f32 = 16.0;
 /// The floating toolbar's height, kept clear under the preview.
 const TOOLBAR_HEIGHT: f32 = 54.0;
 
@@ -104,12 +105,15 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     // The stage fills what's left of the window; the Customize panel sits
     // beside it when open.
     let height = (ui.clip_rect().bottom() - ui.cursor().top()).max(460.0);
-    let open = app.customize_open;
-    let gap = if open { 16.0 } else { 0.0 };
-    let panel = if open { PANEL_WIDTH } else { 0.0 };
-    let stage_width = (ui.available_width() - panel - gap).max(360.0);
+    // The panel slides in from the right; the stage gives way as it does.
+    let open =
+        ui.ctx()
+            .animate_bool_with_time(egui::Id::new("customize-open"), app.customize_open, 0.22);
+    let slot = (PANEL_WIDTH + PANEL_GAP) * ease(open);
+    let stage_width = (ui.available_width() - slot).max(360.0);
     let mut stage = egui::Rect::NOTHING;
     ui.horizontal_top(|ui| {
+        ui.spacing_mut().item_spacing.x = 0.0;
         let (rect, _) = ui.allocate_exact_size(vec2(stage_width, height), Sense::hover());
         stage = rect;
         let mut inner = ui.new_child(
@@ -118,20 +122,33 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 .layout(egui::Layout::top_down(egui::Align::Center)),
         );
         stage_content(app, &mut inner, mode, height);
-        if open {
-            ui.add_space(gap);
-            ui.vertical(|ui| {
-                ui.set_width(PANEL_WIDTH);
-                customize_panel(app, ui, mode, height);
-            });
+        if slot > 0.5 {
+            let (slot, _) = ui.allocate_exact_size(vec2(slot, height), Sense::hover());
+            // Drawn at full width against the slot's right edge, so it
+            // slides rather than squeezes.
+            let panel = egui::Rect::from_min_size(
+                egui::pos2(slot.right() - PANEL_WIDTH, slot.top()),
+                vec2(PANEL_WIDTH, height),
+            );
+            let mut inner = ui.new_child(
+                egui::UiBuilder::new()
+                    .max_rect(panel)
+                    .layout(egui::Layout::top_down(egui::Align::Min)),
+            );
+            inner.set_clip_rect(slot.expand(1.0).intersect(ui.clip_rect()));
+            customize_panel(app, &mut inner, mode, height);
         }
     });
 
-    // The toolbar floats over the bottom of the stage while it's in view.
+    // The toolbar floats over the bottom of the stage while it's in view;
+    // its labels show when there's room for them.
     let anchor = stage.center_bottom() - vec2(0.0, 16.0);
-    let compact = stage.width() < 620.0;
+    let fit = Fit {
+        labels: stage.width() >= 720.0,
+        narrow: stage.width() < 520.0,
+    };
     if ui.clip_rect().contains(anchor - vec2(0.0, 1.0))
-        && let Some(picked) = toolbar(app, ui.ctx(), anchor, mode, compact)
+        && let Some(picked) = toolbar(app, ui.ctx(), anchor, mode, fit)
     {
         let scene = match picked {
             Mode::Digital => app.digital_scene.clone(),
@@ -178,15 +195,28 @@ fn stage_content(app: &mut App, ui: &mut egui::Ui, mode: Mode, height: f32) {
     ui.label(egui::RichText::new(caption).small().color(p.faint));
 }
 
+/// How much the toolbar shows for the stage it sits on.
+#[derive(Debug, Clone, Copy)]
+struct Fit {
+    /// Names beside the mode and Customize icons.
+    labels: bool,
+    /// A shorter brightness slider.
+    narrow: bool,
+}
+
+/// Eases an animation's linear progress in and out.
+fn ease(t: f32) -> f32 {
+    t * t * (3.0 - 2.0 * t)
+}
+
 /// The floating toolbar: the mode, brightness, Zen, rotation and the
-/// Customize panel. Returns a newly picked mode. `compact` trims it to fit
-/// a narrow stage.
+/// Customize panel. Returns a newly picked mode.
 fn toolbar(
     app: &mut App,
     ctx: &egui::Context,
     anchor: egui::Pos2,
     mode: Mode,
-    compact: bool,
+    fit: Fit,
 ) -> Option<Mode> {
     let p = Palette::of(ctx);
     let mut picked = None;
@@ -210,9 +240,9 @@ fn toolbar(
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = 4.0;
                         for m in Mode::ALL {
-                            if tool_button(ui, m.icon(), m == mode, m.detail()).clicked()
-                                && m != mode
-                            {
+                            let label = fit.labels.then_some(m.label());
+                            let button = tool_button(ui, m.icon(), label, m == mode, m.detail());
+                            if button.clicked() && m != mode {
                                 picked = Some(m);
                             }
                         }
@@ -220,7 +250,7 @@ fn toolbar(
 
                         ui.add_space(6.0);
                         icons::show(ui, Icon::Sun, 16.0, p.muted);
-                        ui.spacing_mut().slider_width = if compact { 72.0 } else { 110.0 };
+                        ui.spacing_mut().slider_width = if fit.narrow { 72.0 } else { 110.0 };
                         let mut level = app.brightness;
                         let slider = ui
                             .add(egui::Slider::new(&mut level, 0..=100).show_value(false))
@@ -235,6 +265,7 @@ fn toolbar(
                         let zen = tool_button(
                             ui,
                             Icon::Moon,
+                            None,
                             app.zen,
                             "Zen mode: turns the screen off, keeping your layout and brightness",
                         );
@@ -243,16 +274,19 @@ fn toolbar(
                         }
                         let rotation = app.applied.rotation;
                         let tip = format!("Rotate 90° (now {rotation}°)");
-                        if tool_button(ui, Icon::Rotate, false, &tip).clicked() {
+                        if tool_button(ui, Icon::Rotate, None, false, &tip).clicked() {
                             app.set_rotation((rotation + 90) % 360);
                         }
                         separator(ui);
 
-                        let customize = if compact {
-                            tool_button(ui, Icon::Sliders, app.customize_open, "Customize")
-                        } else {
-                            customize_button(ui, app.customize_open)
-                        };
+                        let label = fit.labels.then_some("Customize");
+                        let customize = tool_button(
+                            ui,
+                            Icon::Sliders,
+                            label,
+                            app.customize_open,
+                            "Customize what the screen shows",
+                        );
                         if customize.clicked() {
                             app.customize_open = !app.customize_open;
                         }
@@ -262,63 +296,52 @@ fn toolbar(
     picked
 }
 
-/// A square icon button for the toolbar; accent-tinted while `on`.
-fn tool_button(ui: &mut egui::Ui, icon: Icon, on: bool, tooltip: &str) -> egui::Response {
+/// A toolbar button: an icon, with its name beside it when given. It eases
+/// into its hover and accent-tinted `on` looks.
+fn tool_button(
+    ui: &mut egui::Ui,
+    icon: Icon,
+    label: Option<&str>,
+    on: bool,
+    tooltip: &str,
+) -> egui::Response {
     let p = Palette::of(ui.ctx());
-    let (rect, response) = ui.allocate_exact_size(vec2(40.0, 40.0), Sense::click());
+    let text = label.map(|label| {
+        ui.painter()
+            .layout_no_wrap(label.to_owned(), theme::medium(13.0), p.text)
+    });
+    let width = text.as_ref().map_or(40.0, |t| t.size().x + 50.0);
+    let (rect, response) = ui.allocate_exact_size(vec2(width, 40.0), Sense::click());
     let response = response
         .on_hover_text(tooltip)
         .on_hover_cursor(egui::CursorIcon::PointingHand);
-    let fill = if on {
-        p.accent_soft
-    } else if response.hovered() {
-        p.raised
-    } else {
-        Color32::TRANSPARENT
-    };
+    let ctx = ui.ctx();
+    let hover = ease(ctx.animate_bool_responsive(response.id.with("hover"), response.hovered()));
+    let lit = ease(ctx.animate_bool_responsive(response.id.with("on"), on));
+    let fill = Color32::TRANSPARENT
+        .lerp_to_gamma(p.raised, hover)
+        .lerp_to_gamma(p.accent_soft, lit);
+    let tint = p
+        .muted
+        .lerp_to_gamma(p.text, hover)
+        .lerp_to_gamma(p.accent, lit);
     ui.painter().rect_filled(rect, 9.0, fill);
-    let tint = if on {
-        p.accent
-    } else if response.hovered() {
-        p.text
+    let icon_at = if text.is_some() {
+        rect.left_center() + vec2(21.0, 0.0)
     } else {
-        p.muted
+        rect.center()
     };
     icons::paint(
         ui,
-        egui::Rect::from_center_size(rect.center(), vec2(18.0, 18.0)),
+        egui::Rect::from_center_size(icon_at, vec2(18.0, 18.0)),
         icon,
         tint,
     );
-    response
-}
-
-/// "Customize" with its icon; raised while the panel is open.
-fn customize_button(ui: &mut egui::Ui, open: bool) -> egui::Response {
-    let p = Palette::of(ui.ctx());
-    let text = ui
-        .painter()
-        .layout_no_wrap("Customize".to_owned(), theme::medium(13.0), p.text);
-    let (rect, response) = ui.allocate_exact_size(vec2(text.size().x + 50.0, 40.0), Sense::click());
-    let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
-    let fill = if open || response.hovered() {
-        p.raised
-    } else {
-        Color32::TRANSPARENT
-    };
-    ui.painter().rect_filled(rect, 9.0, fill);
-    let icon = egui::Rect::from_center_size(rect.left_center() + vec2(22.0, 0.0), vec2(16.0, 16.0));
-    icons::paint(
-        ui,
-        icon,
-        Icon::Sliders,
-        if open { p.accent } else { p.text },
-    );
-    ui.painter().galley(
-        egui::pos2(rect.left() + 38.0, rect.center().y - text.size().y / 2.0),
-        text,
-        p.text,
-    );
+    if let Some(text) = text {
+        let at = egui::pos2(rect.left() + 38.0, rect.center().y - text.size().y / 2.0);
+        ui.painter()
+            .galley(at, text, p.text.lerp_to_gamma(p.accent, lit));
+    }
     response
 }
 
@@ -375,9 +398,18 @@ impl Mode {
 
     fn icon(self) -> Icon {
         match self {
-            Mode::Digital => Icon::Dashboard,
-            Mode::Multimedia => Icon::Image,
-            Mode::Music => Icon::Music,
+            Mode::Digital => Icon::Activity,
+            Mode::Multimedia => Icon::Images,
+            Mode::Music => Icon::AudioLines,
+        }
+    }
+
+    /// A short name for the toolbar.
+    fn label(self) -> &'static str {
+        match self {
+            Mode::Digital => "Live",
+            Mode::Multimedia => "Pictures",
+            Mode::Music => "Music",
         }
     }
 
@@ -516,7 +548,7 @@ fn preview(app: &mut App, ui: &mut egui::Ui) {
                     texture.id(),
                     inner,
                     egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                    Color32::WHITE,
+                    app.preview_tint(),
                 );
             }
             None => {

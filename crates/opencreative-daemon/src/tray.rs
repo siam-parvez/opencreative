@@ -12,12 +12,44 @@ use std::thread;
 use ksni::blocking::{Handle, TrayMethods as _};
 use ksni::menu::{CheckmarkItem, RadioGroup, RadioItem, StandardItem, SubMenu};
 use ksni::{Icon, MenuItem, ToolTip};
+use opencreative_config::{SceneConfig, SceneKind, ScreenTheme, SkinConfig};
 use opencreative_ipc::Request;
 
 use crate::Shared;
 
 /// Brightness steps offered in the menu.
 const BRIGHTNESS: [u8; 5] = [10, 25, 50, 75, 100];
+/// The app's three modes, as the menu lists them.
+const KINDS: [(SceneKind, &str); 3] = [
+    (SceneKind::Digital, "Live data"),
+    (SceneKind::Media, "Pictures & video"),
+    (SceneKind::Music, "Music"),
+];
+/// Looks for live data, as the menu lists them.
+const LOOKS: [(Look, &str); 3] = [
+    (Look::Skin(SkinConfig::Lines), "Lines"),
+    (Look::Skin(SkinConfig::Hud), "HUD"),
+    (Look::Gauges, "Gauges"),
+];
+const ROTATIONS: [u16; 4] = [0, 90, 180, 270];
+
+/// A live-data look: one of the Panels skins, or the gauges.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum Look {
+    Skin(SkinConfig),
+    Gauges,
+}
+
+impl Look {
+    /// The look `scene` shows, if it's live data.
+    pub fn of(scene: &SceneConfig) -> Option<Look> {
+        match scene {
+            SceneConfig::Panels { skin, .. } => Some(Look::Skin(*skin)),
+            SceneConfig::Monitor { .. } => Some(Look::Gauges),
+            _ => None,
+        }
+    }
+}
 
 /// What the menu shows, read from the daemon when something changes.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -26,6 +58,10 @@ pub(crate) struct View {
     pub screen_on: bool,
     pub zen: bool,
     pub brightness: u8,
+    pub kind: SceneKind,
+    pub look: Option<Look>,
+    pub theme: ScreenTheme,
+    pub rotation: u16,
 }
 
 pub(crate) struct CoolerTray {
@@ -42,9 +78,65 @@ impl CoolerTray {
             Request::SetScreen { on } => self.view.screen_on = on,
             Request::SetZen { on } => self.view.zen = on,
             Request::SetBrightness { percent } => self.view.brightness = percent,
+            Request::SetScene { ref scene } => {
+                self.view.kind = scene.kind();
+                self.view.look = Look::of(scene);
+            }
+            Request::SetScreenTheme { theme } => self.view.theme = theme,
+            Request::SetRotation { degrees } => self.view.rotation = degrees,
             _ => {}
         }
         let _ = self.shared.handle(request);
+    }
+
+    /// Switches to the last scene of `kind`, as it was left.
+    fn show_kind(&mut self, kind: SceneKind) {
+        if self.view.kind == kind {
+            return;
+        }
+        let scene = self
+            .shared
+            .config
+            .lock()
+            .expect("config lock")
+            .recent
+            .get(kind);
+        self.apply(Request::SetScene { scene });
+    }
+
+    /// Switches live data to `look`, keeping the chosen readings and how
+    /// often they refresh.
+    fn show_look(&mut self, look: Look) {
+        let (current, last) = {
+            let config = self.shared.config.lock().expect("config lock");
+            (config.scene.clone(), config.recent.get(SceneKind::Digital))
+        };
+        let interval_secs = [&current, &last]
+            .into_iter()
+            .find_map(|scene| match scene {
+                SceneConfig::Panels { interval_secs, .. }
+                | SceneConfig::Monitor { interval_secs } => Some(*interval_secs),
+                _ => None,
+            })
+            .unwrap_or(1.0);
+        let readings = [&current, &last, &SceneConfig::default()]
+            .into_iter()
+            .find_map(|scene| match scene {
+                SceneConfig::Panels {
+                    primary, secondary, ..
+                } => Some((*primary, *secondary)),
+                _ => None,
+            });
+        let scene = match (look, readings) {
+            (Look::Gauges, _) | (Look::Skin(_), None) => SceneConfig::Monitor { interval_secs },
+            (Look::Skin(skin), Some((primary, secondary))) => SceneConfig::Panels {
+                skin,
+                primary,
+                secondary,
+                interval_secs,
+            },
+        };
+        self.apply(Request::SetScene { scene });
     }
 }
 
@@ -124,6 +216,47 @@ impl ksni::Tray for CoolerTray {
             }
             .into(),
             MenuItem::Separator,
+            RadioGroup {
+                selected: KINDS.iter().position(|(k, _)| *k == view.kind).unwrap_or(0),
+                select: Box::new(|tray: &mut Self, i| {
+                    tray.show_kind(KINDS[i.min(KINDS.len() - 1)].0);
+                }),
+                options: KINDS
+                    .iter()
+                    .map(|(_, label)| RadioItem {
+                        label: (*label).into(),
+                        enabled: view.device.is_some(),
+                        ..Default::default()
+                    })
+                    .collect(),
+            }
+            .into(),
+            SubMenu {
+                label: "Look".into(),
+                enabled: view.device.is_some() && view.kind == SceneKind::Digital,
+                submenu: vec![
+                    RadioGroup {
+                        selected: LOOKS
+                            .iter()
+                            .position(|(l, _)| Some(*l) == view.look)
+                            .unwrap_or(0),
+                        select: Box::new(|tray: &mut Self, i| {
+                            tray.show_look(LOOKS[i.min(LOOKS.len() - 1)].0);
+                        }),
+                        options: LOOKS
+                            .iter()
+                            .map(|(_, label)| RadioItem {
+                                label: (*label).into(),
+                                ..Default::default()
+                            })
+                            .collect(),
+                    }
+                    .into(),
+                ],
+                ..Default::default()
+            }
+            .into(),
+            MenuItem::Separator,
             CheckmarkItem {
                 label: "Screen on".into(),
                 checked: view.screen_on,
@@ -160,6 +293,60 @@ impl ksni::Tray for CoolerTray {
                             .iter()
                             .map(|b| RadioItem {
                                 label: format!("{b}%"),
+                                ..Default::default()
+                            })
+                            .collect(),
+                    }
+                    .into(),
+                ],
+                ..Default::default()
+            }
+            .into(),
+            SubMenu {
+                label: "Screen colors".into(),
+                // Pictures and videos keep their own colors.
+                enabled: view.device.is_some() && view.kind != SceneKind::Media,
+                submenu: vec![
+                    RadioGroup {
+                        selected: usize::from(view.theme == ScreenTheme::Light),
+                        select: Box::new(|tray: &mut Self, i| {
+                            let theme = if i == 1 {
+                                ScreenTheme::Light
+                            } else {
+                                ScreenTheme::Dark
+                            };
+                            tray.apply(Request::SetScreenTheme { theme });
+                        }),
+                        options: ["Dark", "Light"]
+                            .into_iter()
+                            .map(|label| RadioItem {
+                                label: label.into(),
+                                ..Default::default()
+                            })
+                            .collect(),
+                    }
+                    .into(),
+                ],
+                ..Default::default()
+            }
+            .into(),
+            SubMenu {
+                label: "Rotation".into(),
+                enabled: view.device.is_some(),
+                submenu: vec![
+                    RadioGroup {
+                        selected: ROTATIONS
+                            .iter()
+                            .position(|r| *r == view.rotation)
+                            .unwrap_or(0),
+                        select: Box::new(|tray: &mut Self, i| {
+                            let degrees = ROTATIONS[i.min(ROTATIONS.len() - 1)];
+                            tray.apply(Request::SetRotation { degrees });
+                        }),
+                        options: ROTATIONS
+                            .iter()
+                            .map(|r| RadioItem {
+                                label: format!("{r}°"),
                                 ..Default::default()
                             })
                             .collect(),
