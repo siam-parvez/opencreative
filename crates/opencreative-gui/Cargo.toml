@@ -60,6 +60,7 @@ assets = [
     ["../../packaging/linux/60-opencreative.rules", "usr/lib/udev/rules.d/", "644"],
     ["../../packaging/linux/61-opencreative-power.rules", "usr/share/opencreative/", "644"],
     ["../../packaging/linux/restart-user-services.sh", "usr/share/opencreative/", "755"],
+    ["../../packaging/linux/stop-user-services.sh", "usr/share/opencreative/", "755"],
     ["../../packaging/linux/package/opencreative.desktop", "usr/share/applications/", "644"],
     ["../../packaging/linux/package/opencreative.service", "usr/lib/systemd/user/", "644"],
     ["../../packaging/linux/opencreative.png", "usr/share/icons/hicolor/256x256/apps/", "644"],
@@ -73,6 +74,8 @@ name = "opencreative"
 license = "MIT OR Apache-2.0"
 summary = "Customize DeepCool LCD cooler screens"
 post_install_script = "udevadm control --reload || :; udevadm trigger --subsystem-match=usb --attr-match=idVendor=3633 || :; sh /usr/share/opencreative/restart-user-services.sh || :"
+# $1 is 0 on removal and 1 or more on upgrade.
+pre_uninstall_script = "[ \"$1\" = 0 ] && sh /usr/share/opencreative/stop-user-services.sh || :"
 post_uninstall_script = "udevadm control --reload || :"
 assets = [
     { source = "target/release/opencreative-gui", dest = "/usr/bin/opencreative-gui", mode = "755" },
@@ -80,6 +83,7 @@ assets = [
     { source = "../../packaging/linux/60-opencreative.rules", dest = "/usr/lib/udev/rules.d/60-opencreative.rules", mode = "644" },
     { source = "../../packaging/linux/61-opencreative-power.rules", dest = "/usr/share/opencreative/61-opencreative-power.rules", mode = "644" },
     { source = "../../packaging/linux/restart-user-services.sh", dest = "/usr/share/opencreative/restart-user-services.sh", mode = "755" },
+    { source = "../../packaging/linux/stop-user-services.sh", dest = "/usr/share/opencreative/stop-user-services.sh", mode = "755" },
     { source = "../../packaging/linux/package/opencreative.desktop", dest = "/usr/share/applications/opencreative.desktop", mode = "644" },
     { source = "../../packaging/linux/package/opencreative.service", dest = "/usr/lib/systemd/user/opencreative.service", mode = "644" },
     { source = "../../packaging/linux/opencreative.png", dest = "/usr/share/icons/hicolor/256x256/apps/opencreative.png", mode = "644" },

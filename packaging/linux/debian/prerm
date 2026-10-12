@@ -1,0 +1,9 @@
+#!/bin/sh
+set -e
+# Removal, not an upgrade: stop the background services and app windows,
+# which would otherwise keep running, top-bar icon and all.
+case "$1" in
+    remove|deconfigure)
+        sh /usr/share/opencreative/stop-user-services.sh || true
+        ;;
+esac
