@@ -11,11 +11,11 @@ alternative to DeepCool's Windows-only DeepCreative app.
 > by DeepCool. "DeepCool" and "DeepCreative" are trademarks of their owners.
 
 <p>
-  <img src="docs/screenshots/devices.png" alt="OpenCreative devices page: the cooler pictured with its live screen" width="100%">
+  <img src="docs/screenshots/device.png" alt="The cooler screen editor: the live preview on a stage, a floating toolbar, and the Customize panel for music bars" width="100%">
 </p>
 <p>
-  <img src="docs/screenshots/dashboard.png" alt="OpenCreative dashboard" width="49%">
-  <img src="docs/screenshots/device.png" alt="OpenCreative cooler screen settings" width="49%">
+  <img src="docs/screenshots/devices.png" alt="Devices page: the cooler pictured with its live screen" width="49%">
+  <img src="docs/screenshots/dashboard.png" alt="Dashboard: CPU, GPU, memory, storage and network" width="49%">
 </p>
 
 ## Install
@@ -52,23 +52,35 @@ new version by itself and keeps your settings.
 
 ## What it does
 
-- **Digital mode**: live readings on the cooler, one large and two small, of
+- **Live data**: live readings on the cooler, one large and two small, of
   your choice (CPU or GPU temperature, load, frequency, power, RAM), in three
   looks: **Lines**, **HUD** (with live charts) and **Gauges**. One-click
   presets cover the usual combinations.
-- **Multimedia mode**: playlists of **Images**, **GIFs**, **Videos** or
+- **Pictures & video**: playlists of **Images**, **GIFs**, **Videos** or
   **YouTube** links, each kind on its own tab, or a plain **Color**. Drop files
   on the window or use Browse. Drag the preview to move a picture and scroll to
   zoom. Select several items with Ctrl or Shift and press Delete.
-- **Music mode**: bars that move with whatever your speakers or headphones are
+- **Music**: bars that move with whatever your speakers or headphones are
   playing, rising or mirrored, in one color or a rainbow by pitch.
-- **Display**: brightness, rotation for any pump orientation, and Zen mode (a
-  calm clock).
-- **Your look**: dark or light theme, and a choice of app fonts (Inter,
-  Geist, Manrope, IBM Plex Sans).
+- **Display**: brightness, dark or light screen colors, rotation for any pump
+  orientation, and Zen mode (a calm, dim clock in place of your layout).
+- **The editor**: the cooler's screen on a stage of its own, with one toolbar
+  for the mode, brightness, Zen and rotation, and a **Customize** panel for
+  the details that slides away when you don't need it. The preview shows
+  exactly what's on the cooler, frame for frame, dimmed to its brightness.
+- **Top-bar menu**: switch between Live data, Pictures & video and Music,
+  pick a look, and set brightness, screen colors, rotation or Zen mode
+  without opening the window. Each mode comes back as you last left it.
+- **Your look**: dark or light theme, a choice of app fonts (Inter, Geist,
+  Manrope, IBM Plex Sans), and a sidebar that folds to icons on smaller
+  windows.
 - **Dashboard**: this computer's CPU, GPU, memory, storage and network at a
   glance, with a two-minute history.
-- The preview in the app shows exactly what's on the cooler, frame for frame.
+
+<p>
+  <img src="docs/screenshots/device-light.png" alt="The editor in the light theme" width="55%">
+  <img src="docs/screenshots/device-compact.png" alt="A smaller window: the sidebar folds to icons" width="44%">
+</p>
 
 <p>
   <img src="docs/screenshots/skin-lines.png" alt="Lines skin: three readings framed by thin lines over a tile grid" width="32%">

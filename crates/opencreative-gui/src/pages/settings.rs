@@ -93,8 +93,8 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             setting_row(
                 ui,
                 "Show in the top bar",
-                "An OpenCreative icon next to the clock, to open this window or switch \
-                 the screen off, Zen mode and brightness without it.",
+                "An OpenCreative icon next to the clock, to open this window, or to \
+                 switch modes and looks, brightness, colors and rotation without it.",
                 |ui| {
                     let mut on = !app.applied.hide_tray;
                     if toggle(ui, &mut on).changed()

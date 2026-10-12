@@ -188,7 +188,7 @@ fn stage_content(app: &mut App, ui: &mut egui::Ui, mode: Mode, height: f32) {
         Mode::Music => "Bars that move with what's playing".to_owned(),
     };
     let caption = if app.zen {
-        "Zen mode: the screen is off".to_owned()
+        "Zen mode: a calm clock instead of your layout".to_owned()
     } else {
         caption
     };
@@ -267,7 +267,7 @@ fn toolbar(
                             Icon::Moon,
                             None,
                             app.zen,
-                            "Zen mode: turns the screen off, keeping your layout and brightness",
+                            "Zen mode: a calm, dim clock instead of your layout, which comes back when you turn it off",
                         );
                         if zen.clicked() {
                             app.set_zen(!app.zen);
