@@ -744,13 +744,12 @@ fn multimedia(app: &mut App, ui: &mut egui::Ui) {
             None => app.set_scene(SceneConfig::Solid {
                 color: Rgb(SWATCHES[0]),
             }),
-            Some(kind) => {
+            Some(_) => {
+                // An empty tab shows its drop zone; picking files is up to
+                // the user.
                 let (items, secs) = app.playlist();
                 if !items.is_empty() {
                     app.set_playlist(items, secs, false);
-                } else if kind != MediaKind::Youtube {
-                    let ctx = ui.ctx().clone();
-                    app.browse_for_media(&ctx, kind);
                 }
             }
         }
@@ -797,6 +796,9 @@ fn playlist(app: &mut App, ui: &mut egui::Ui, kind: MediaKind) {
     let p = Palette::of(ui.ctx());
     let ctx = ui.ctx().clone();
     let (mut items, mut secs) = app.playlist();
+    if kind == MediaKind::Youtube {
+        ytdlp_notice(app, ui);
+    }
     if items.is_empty() {
         if kind == MediaKind::Youtube {
             add_url_row(app, ui);
@@ -825,33 +827,45 @@ fn playlist(app: &mut App, ui: &mut egui::Ui, kind: MediaKind) {
             ))
             .corner_radius(8)
             .inner_margin(egui::Margin::symmetric(10, 6));
-        let row = frame.show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.horizontal(|ui| {
-                let icon = match kind {
-                    MediaKind::Youtube => Icon::Link,
-                    MediaKind::Video => Icon::Film,
-                    MediaKind::Image | MediaKind::Gif => Icon::Image,
-                };
-                icons::show(ui, icon, 16.0, if lit { p.accent } else { p.muted });
-                ui.add(
-                    egui::Label::new(egui::RichText::new(item.label()).color(p.text)).truncate(),
-                );
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if icon_button(ui, Icon::Trash, "Take out of the playlist").clicked() {
-                        action = Some(RowAction::TakeOut(vec![i]));
-                    }
-                    if i + 1 < items.len() && icon_button(ui, Icon::Down, "Move down").clicked() {
-                        action = Some(RowAction::Swap(i, i + 1));
-                    }
-                    if i > 0 && icon_button(ui, Icon::Up, "Move up").clicked() {
-                        action = Some(RowAction::Swap(i - 1, i));
-                    }
-                });
-            });
-        });
-        let click = ui.interact(row.response.rect, ui.id().with(("item", i)), Sense::click());
-        if click
+        // The row's click is registered before its buttons, so the buttons
+        // (on top) get their own clicks.
+        let row = ui.scope_builder(
+            egui::UiBuilder::new()
+                .id_salt(("item", i))
+                .sense(Sense::click()),
+            |ui| {
+                frame.show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.horizontal(|ui| {
+                        let icon = match kind {
+                            MediaKind::Youtube => Icon::Link,
+                            MediaKind::Video => Icon::Film,
+                            MediaKind::Image | MediaKind::Gif => Icon::Image,
+                        };
+                        icons::show(ui, icon, 16.0, if lit { p.accent } else { p.muted });
+                        ui.add(
+                            egui::Label::new(egui::RichText::new(item.label()).color(p.text))
+                                .truncate(),
+                        );
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if icon_button(ui, Icon::Trash, "Take out of the playlist").clicked() {
+                                action = Some(RowAction::TakeOut(vec![i]));
+                            }
+                            if i + 1 < items.len()
+                                && icon_button(ui, Icon::Down, "Move down").clicked()
+                            {
+                                action = Some(RowAction::Swap(i, i + 1));
+                            }
+                            if i > 0 && icon_button(ui, Icon::Up, "Move up").clicked() {
+                                action = Some(RowAction::Swap(i - 1, i));
+                            }
+                        });
+                    });
+                })
+            },
+        );
+        if row
+            .response
             .on_hover_cursor(egui::CursorIcon::PointingHand)
             .clicked()
         {
@@ -1082,7 +1096,6 @@ fn tool_notices(app: &mut App, ui: &mut egui::Ui, kind: MediaKind) {
     use opencreative_render::video::tool;
     let p = Palette::of(ui.ctx());
     let has_video = matches!(kind, MediaKind::Video | MediaKind::Youtube);
-    let has_url = kind == MediaKind::Youtube;
     let notice = |ui: &mut egui::Ui, text: &str| {
         ui.add_space(10.0);
         ui.horizontal_wrapped(|ui| {
@@ -1101,21 +1114,42 @@ fn tool_notices(app: &mut App, ui: &mut egui::Ui, kind: MediaKind) {
             app.notify("Command copied.");
         }
     }
-    if has_url && tool("yt-dlp").is_none() {
-        notice(
-            ui,
-            "YouTube links need yt-dlp. OpenCreative can download the current release \
-             for you (about 3 MB, into its own folder).",
-        );
-        let busy = app.task.is_some();
-        if ui
-            .add_enabled(!busy, egui::Button::new("Download yt-dlp"))
-            .clicked()
-        {
-            let ctx = ui.ctx().clone();
-            app.run_task(&ctx, "Downloading yt-dlp", crate::service::download_ytdlp);
-        }
+}
+
+/// YouTube links need yt-dlp: offer to download it when it's missing.
+fn ytdlp_notice(app: &mut App, ui: &mut egui::Ui) {
+    let p = Palette::of(ui.ctx());
+    if opencreative_render::video::tool("yt-dlp").is_some() {
+        return;
     }
+    egui::Frame::new()
+        .fill(p.warn.gamma_multiply(0.12))
+        .stroke(Stroke::new(1.0, p.warn.gamma_multiply(0.5)))
+        .corner_radius(10)
+        .inner_margin(12)
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal_wrapped(|ui| {
+                icons::show(ui, Icon::Help, 15.0, p.warn);
+                ui.label(
+                    egui::RichText::new(
+                        "YouTube links need yt-dlp. OpenCreative can download the current \
+                         release for you (about 3 MB, into its own folder).",
+                    )
+                    .color(p.text),
+                );
+            });
+            ui.add_space(6.0);
+            let busy = app.task.is_some();
+            if ui
+                .add_enabled(!busy, egui::Button::new("Download yt-dlp"))
+                .clicked()
+            {
+                let ctx = ui.ctx().clone();
+                app.run_task(&ctx, "Downloading yt-dlp", crate::service::download_ytdlp);
+            }
+        });
+    ui.add_space(10.0);
 }
 
 fn drop_zone(app: &mut App, ui: &mut egui::Ui, kind: MediaKind) {
@@ -1209,6 +1243,64 @@ mod tests {
         let narrow = thumb_size(540.0, 10.0);
         let row = 3.0 * (narrow.x + THUMB_CHROME) + 2.0 * 10.0;
         assert!(row <= 540.0, "{row}");
+    }
+
+    /// A button inside a clickable playlist row must get its own click,
+    /// and a click beside it must still pick the row.
+    #[test]
+    fn row_buttons_get_their_own_clicks() {
+        let ctx = egui::Context::default();
+        // As in the app: labels aren't text-selectable.
+        ctx.global_style_mut(|s| s.interaction.selectable_labels = false);
+        let time = std::cell::Cell::new(0.0);
+        let frame = |events: Vec<egui::Event>| {
+            // Clicks are timed, so the clock has to move.
+            time.set(time.get() + 0.05);
+            let mut hits = (false, false, egui::Rect::NOTHING);
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    vec2(400.0, 200.0),
+                )),
+                time: Some(time.get()),
+                events,
+                ..Default::default()
+            };
+            let mut output = ctx.run_ui(input, |ui| {
+                let row = ui.scope_builder(
+                    egui::UiBuilder::new().id_salt("row").sense(Sense::click()),
+                    |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label("clip.mp4");
+                            let button = ui.button("trash");
+                            hits.0 |= button.clicked();
+                            hits.2 = button.rect;
+                        });
+                    },
+                );
+                // The UI may run twice in one frame; a click counts once.
+                hits.1 |= row.response.clicked();
+            });
+            output.textures_delta.clear();
+            hits
+        };
+        let button_event = |at: egui::Pos2, pressed: bool| egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        };
+        // Move, press and release on separate frames, like a real mouse.
+        let click = |at: egui::Pos2| {
+            let _ = frame(vec![egui::Event::PointerMoved(at)]);
+            let _ = frame(vec![button_event(at, true)]);
+            frame(vec![button_event(at, false)])
+        };
+        let (_, _, button) = frame(Vec::new());
+        let (on_button, on_row, _) = click(button.center());
+        assert!(on_button && !on_row, "button {on_button}, row {on_row}");
+        let (on_button, on_row, _) = click(egui::pos2(4.0, button.center().y));
+        assert!(!on_button && on_row, "button {on_button}, row {on_row}");
     }
 
     #[test]

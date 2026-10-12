@@ -354,7 +354,7 @@ impl Player {
                     *stream = Stream::open(&items[media.index], size.0, size.1)?;
                     frame = stream.next_frame();
                 }
-                let frame = frame.ok_or(Error::Video(video::VideoError::NoFrames))?;
+                let frame = frame.ok_or_else(|| Error::Video(stream.failure()))?;
                 Ok(Output {
                     frame: rotate(&frame, rotation),
                     hold: Some(Stream::frame_time()),

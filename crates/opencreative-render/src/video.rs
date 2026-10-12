@@ -6,10 +6,11 @@
 //! Both tools are found on `PATH` or in OpenCreative's own tools folder
 //! (`~/.local/share/opencreative/bin`), where the app can put `yt-dlp`.
 
-use std::io::Read;
-use std::path::PathBuf;
+use std::io::{BufRead, BufReader, Read};
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc::{self, Receiver};
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
@@ -36,8 +37,24 @@ pub enum VideoError {
         tool: &'static str,
         source: std::io::Error,
     },
-    #[error("the video has no frames, or the site wouldn't send it")]
-    NoFrames,
+    #[error(
+        "YouTube and other web links need yt-dlp: use \"Download yt-dlp\" on the \
+         Cooler screen page"
+    )]
+    NoYtdlp,
+    /// With yt-dlp's own explanation when it gave one.
+    #[error("{}", match reason {
+        Some(r) => format!("the site wouldn't send the video: {r}"),
+        None => "the video has no frames, or the site wouldn't send it".to_owned(),
+    })]
+    NoFrames { reason: Option<String> },
+}
+
+/// Whether `url` is a web page (YouTube and the like) rather than a direct
+/// link to a video file, so it needs yt-dlp.
+pub fn needs_ytdlp(url: &str) -> bool {
+    let path = url.split(['?', '#']).next().unwrap_or(url);
+    !crate::media::is_video_path(Path::new(path))
 }
 
 /// Where OpenCreative keeps tools it downloads itself.
@@ -61,6 +78,8 @@ pub struct Stream {
     /// ffmpeg, and yt-dlp feeding it for web pages.
     children: Vec<Child>,
     frames: Receiver<Pixmap>,
+    /// yt-dlp's last error line, if it reported one.
+    complaint: Arc<Mutex<Option<String>>>,
 }
 
 impl Stream {
@@ -68,6 +87,7 @@ impl Stream {
     pub fn open(item: &Item, width: u32, height: u32) -> Result<Self, VideoError> {
         let ffmpeg = tool("ffmpeg").ok_or(VideoError::NoFfmpeg)?;
         let mut children = Vec::new();
+        let complaint = Arc::new(Mutex::new(None));
         let (input, stdin) = match &item.source {
             Source::Path(path) => (path.display().to_string(), Stdio::null()),
             Source::Url(url) => match tool("yt-dlp") {
@@ -83,16 +103,29 @@ impl Stream {
                         .args(["-o", "-", url])
                         .stdin(Stdio::null())
                         .stdout(Stdio::piped())
-                        .stderr(Stdio::null())
+                        .stderr(Stdio::piped())
                         .spawn()
                         .map_err(|source| VideoError::Spawn {
                             tool: "yt-dlp",
                             source,
                         })?;
                     let pipe = Stdio::from(download.stdout.take().expect("piped"));
+                    let stderr = download.stderr.take().expect("piped");
+                    let sink = Arc::clone(&complaint);
+                    // Keep the reason a site refused, for the error message.
+                    let _ = thread::Builder::new()
+                        .name("yt-dlp-errors".into())
+                        .spawn(move || {
+                            for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+                                if let Some(msg) = line.strip_prefix("ERROR: ") {
+                                    *sink.lock().expect("lock") = Some(msg.trim().to_owned());
+                                }
+                            }
+                        });
                     children.push(download);
                     ("pipe:0".to_owned(), pipe)
                 }
+                None if needs_ytdlp(url) => return Err(VideoError::NoYtdlp),
                 // A direct link to a video file: ffmpeg reads it itself.
                 None => (url.clone(), Stdio::null()),
             },
@@ -139,7 +172,18 @@ impl Stream {
                 source,
             })?;
         children.push(child);
-        Ok(Self { children, frames })
+        Ok(Self {
+            children,
+            frames,
+            complaint,
+        })
+    }
+
+    /// Why no frames came: yt-dlp's complaint, if it made one.
+    pub fn failure(&self) -> VideoError {
+        VideoError::NoFrames {
+            reason: self.complaint.lock().expect("lock").clone(),
+        }
     }
 
     /// The next frame, waiting for the decoder; `None` once the video ends.
@@ -191,6 +235,14 @@ fn filter(fit: Fit, crop: Crop, (w, h): (u32, u32)) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn web_pages_need_ytdlp_but_file_links_dont() {
+        assert!(needs_ytdlp("https://www.youtube.com/watch?v=jNQXAC9IVRw"));
+        assert!(needs_ytdlp("https://youtu.be/jNQXAC9IVRw"));
+        assert!(!needs_ytdlp("https://example.com/clip.mp4?token=1"));
+        assert!(!needs_ytdlp("https://example.com/a/b.WEBM"));
+    }
 
     #[test]
     fn filters_crop_then_fit() {
