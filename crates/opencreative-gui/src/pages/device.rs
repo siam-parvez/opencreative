@@ -101,26 +101,18 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 .font(theme::semibold(22.0))
                 .color(p.text),
         );
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if segmented(
-                ui,
-                &mut mode,
-                &[
-                    (Mode::Digital, "Digital"),
-                    (Mode::Multimedia, "Multimedia"),
-                    (Mode::Music, "Music"),
-                ],
-            ) {
-                let scene = match mode {
-                    Mode::Digital => app.digital_scene.clone(),
-                    Mode::Multimedia => app.media_scene.clone(),
-                    Mode::Music => app.music_scene.clone(),
-                };
-                app.set_scene(scene);
-            }
-            ui.label(egui::RichText::new("Mode").color(p.muted));
-        });
     });
+    ui.add_space(14.0);
+
+    if let Some(picked) = mode_cards(ui, mode) {
+        mode = picked;
+        let scene = match mode {
+            Mode::Digital => app.digital_scene.clone(),
+            Mode::Multimedia => app.media_scene.clone(),
+            Mode::Music => app.music_scene.clone(),
+        };
+        app.set_scene(scene);
+    }
     ui.add_space(14.0);
 
     if app.device.is_none() {
@@ -149,6 +141,99 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         });
     });
     ui.add_space(56.0);
+}
+
+impl Mode {
+    const ALL: [Mode; 3] = [Mode::Digital, Mode::Multimedia, Mode::Music];
+
+    fn icon(self) -> Icon {
+        match self {
+            Mode::Digital => Icon::Dashboard,
+            Mode::Multimedia => Icon::Image,
+            Mode::Music => Icon::Music,
+        }
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Mode::Digital => "Digital",
+            Mode::Multimedia => "Multimedia",
+            Mode::Music => "Music",
+        }
+    }
+
+    fn detail(self) -> &'static str {
+        match self {
+            Mode::Digital => "Live temperatures, load and more",
+            Mode::Multimedia => "Images, GIFs, videos and YouTube",
+            Mode::Music => "Bars that move with what's playing",
+        }
+    }
+}
+
+/// What the screen shows, as three cards side by side. Returns the mode
+/// clicked, if it isn't the current one.
+fn mode_cards(ui: &mut egui::Ui, current: Mode) -> Option<Mode> {
+    let p = Palette::of(ui.ctx());
+    let mut picked = None;
+    ui.columns(Mode::ALL.len(), |cols| {
+        for (col, mode) in cols.iter_mut().zip(Mode::ALL) {
+            let selected = mode == current;
+            let response = col
+                .scope_builder(
+                    egui::UiBuilder::new()
+                        .id_salt(("mode", mode.name()))
+                        .sense(Sense::click()),
+                    |ui| {
+                        let hovered = ui.response().hovered();
+                        egui::Frame::new()
+                            .fill(if selected {
+                                p.accent_soft
+                            } else if hovered {
+                                p.raised
+                            } else {
+                                p.card
+                            })
+                            .stroke(Stroke::new(
+                                if selected { 1.5 } else { 1.0 },
+                                if selected { p.accent } else { p.border },
+                            ))
+                            .corner_radius(theme::RADIUS)
+                            .inner_margin(egui::Margin::symmetric(16, 14))
+                            .show(ui, |ui| {
+                                ui.set_width(ui.available_width());
+                                ui.horizontal(|ui| {
+                                    let tint = if selected { p.accent } else { p.muted };
+                                    icons::show(ui, mode.icon(), 22.0, tint);
+                                    ui.add_space(4.0);
+                                    ui.vertical(|ui| {
+                                        ui.spacing_mut().item_spacing.y = 2.0;
+                                        ui.label(
+                                            egui::RichText::new(mode.name())
+                                                .font(theme::semibold(15.0))
+                                                .color(p.text),
+                                        );
+                                        ui.add(
+                                            egui::Label::new(
+                                                egui::RichText::new(mode.detail())
+                                                    .small()
+                                                    .color(p.muted),
+                                            )
+                                            .truncate(),
+                                        );
+                                    });
+                                });
+                            });
+                    },
+                )
+                .response
+                .on_hover_cursor(egui::CursorIcon::PointingHand);
+            if response.clicked() && !selected {
+                picked = Some(mode);
+            }
+        }
+    });
+    picked
 }
 
 fn notice(app: &mut App, ui: &mut egui::Ui) {
@@ -204,6 +289,23 @@ fn display_controls(app: &mut App, ui: &mut egui::Ui, mode: Mode) {
         });
     });
     ui.add_space(14.0);
+
+    // Pictures and videos keep their own colors.
+    if mode != Mode::Multimedia {
+        ui.label(egui::RichText::new("Screen colors").color(p.text));
+        let mut theme = app.applied.screen_theme;
+        if segmented(
+            ui,
+            &mut theme,
+            &[
+                (opencreative_config::ScreenTheme::Dark, "Dark"),
+                (opencreative_config::ScreenTheme::Light, "Light"),
+            ],
+        ) {
+            app.set_screen_theme(theme);
+        }
+        ui.add_space(14.0);
+    }
 
     ui.label(egui::RichText::new("Rotation").color(p.text));
     let mut rotation = app.applied.rotation;
@@ -461,6 +563,8 @@ pub struct SkinThumbs {
     textures: Vec<egui::TextureHandle>,
     /// The size they were rendered for, in points.
     size: egui::Vec2,
+    /// The screen colors they were rendered in.
+    theme: opencreative_config::ScreenTheme,
 }
 
 const THUMB_REFRESH: Duration = Duration::from_secs(2);
@@ -568,7 +672,12 @@ fn refresh_thumbs(app: &mut App, ctx: &egui::Context, layout: &Layout, size: egu
     let fresh = thumbs
         .rendered
         .is_some_and(|at| at.elapsed() < THUMB_REFRESH);
-    if fresh && thumbs.size == size && thumbs.textures.len() == Look::ALL.len() {
+    let theme = app.applied.screen_theme;
+    if fresh
+        && thumbs.size == size
+        && thumbs.theme == theme
+        && thumbs.textures.len() == Look::ALL.len()
+    {
         return;
     }
     let snap = app.history.latest().cloned().unwrap_or_default();
@@ -580,12 +689,13 @@ fn refresh_thumbs(app: &mut App, ctx: &egui::Context, layout: &Layout, size: egu
     let images: Vec<_> = Look::ALL
         .into_iter()
         .map(|look| {
-            let frame = match look {
+            let mut frame = match look {
                 Look::Skin(skin) => {
                     opencreative_render::panels::render(&snap, &history, layout, skin.into(), w, h)
                 }
                 Look::Gauges => opencreative_render::monitor::render(&snap, &clock, w, h),
             };
+            opencreative_render::shade::apply(&mut frame, theme.into());
             let rgba = crate::panel_colors(frame.data(), w);
             egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &rgba)
         })
@@ -604,6 +714,7 @@ fn refresh_thumbs(app: &mut App, ctx: &egui::Context, layout: &Layout, size: egu
     }
     thumbs.rendered = Some(Instant::now());
     thumbs.size = size;
+    thumbs.theme = theme;
     ctx.request_repaint_after(THUMB_REFRESH);
 }
 

@@ -10,11 +10,13 @@ pub mod media;
 pub mod monitor;
 pub mod music;
 pub mod panels;
+pub mod shade;
 mod shapes;
 mod text;
 pub mod video;
 pub mod zen;
 
+pub use shade::Shade;
 pub use tiny_skia::Pixmap;
 
 /// How the cooler is mounted, i.e. how far to rotate content clockwise.

@@ -14,6 +14,8 @@ use crate::{Player, RECONNECT_DELAY, Scene};
 pub enum Command {
     SetScene(Scene),
     SetRotation(Rotation),
+    /// Draws readings, music bars and Zen dark or light.
+    SetShade(opencreative_render::Shade),
     SetBrightness(u8),
     /// Turns the screen on or off. Off is backlight 0 with frames paused:
     /// the protocol has no confirmed "display off" command.
@@ -161,18 +163,29 @@ pub fn run_daemon(
             match command {
                 Command::Shutdown => return,
                 Command::SetScene(scene) => {
-                    player = Player::new(scene, player.rotation());
+                    player = Player::new(scene, player.rotation()).with_shade(player.shade());
                     break;
                 }
                 Command::SetRotation(rotation) => {
-                    player = Player::new(player.scene().clone(), rotation);
+                    player =
+                        Player::new(player.scene().clone(), rotation).with_shade(player.shade());
                     if zen.is_some() {
-                        zen = Some(Player::new(Scene::Zen, rotation));
+                        zen = Some(Player::new(Scene::Zen, rotation).with_shade(player.shade()));
+                    }
+                    break;
+                }
+                Command::SetShade(shade) => {
+                    player =
+                        Player::new(player.scene().clone(), player.rotation()).with_shade(shade);
+                    if zen.is_some() {
+                        zen = Some(Player::new(Scene::Zen, player.rotation()).with_shade(shade));
                     }
                     break;
                 }
                 Command::SetZen(on) => {
-                    zen = on.then(|| Player::new(Scene::Zen, player.rotation()));
+                    zen = on.then(|| {
+                        Player::new(Scene::Zen, player.rotation()).with_shade(player.shade())
+                    });
                     update(&|s| s.zen = on);
                     break;
                 }

@@ -15,6 +15,6 @@ opencreative-ipc.workspace = true
 opencreative-protocol.workspace = true
 opencreative-render.workspace = true
 anyhow.workspace = true
-image.workspace = true
+tiny-skia.workspace = true
 log.workspace = true
 ksni = { version = "0.3", default-features = false, features = ["blocking", "async-io"] }

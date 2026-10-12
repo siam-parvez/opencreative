@@ -63,6 +63,7 @@ assets = [
     ["../../packaging/linux/package/opencreative.desktop", "usr/share/applications/", "644"],
     ["../../packaging/linux/package/opencreative.service", "usr/lib/systemd/user/", "644"],
     ["../../packaging/linux/opencreative.png", "usr/share/icons/hicolor/256x256/apps/", "644"],
+    ["../../packaging/linux/opencreative-symbolic.svg", "usr/share/icons/hicolor/symbolic/apps/", "644"],
     ["../../packaging/linux/io.github.siam_parvez.opencreative.metainfo.xml", "usr/share/metainfo/", "644"],
     ["../../README.md", "usr/share/doc/opencreative/", "644"],
 ]
@@ -82,6 +83,7 @@ assets = [
     { source = "../../packaging/linux/package/opencreative.desktop", dest = "/usr/share/applications/opencreative.desktop", mode = "644" },
     { source = "../../packaging/linux/package/opencreative.service", dest = "/usr/lib/systemd/user/opencreative.service", mode = "644" },
     { source = "../../packaging/linux/opencreative.png", dest = "/usr/share/icons/hicolor/256x256/apps/opencreative.png", mode = "644" },
+    { source = "../../packaging/linux/opencreative-symbolic.svg", dest = "/usr/share/icons/hicolor/symbolic/apps/opencreative-symbolic.svg", mode = "644" },
     { source = "../../packaging/linux/io.github.siam_parvez.opencreative.metainfo.xml", dest = "/usr/share/metainfo/io.github.siam_parvez.opencreative.metainfo.xml", mode = "644" },
     { source = "../../README.md", dest = "/usr/share/doc/opencreative/README.md", mode = "644", doc = true },
 ]

@@ -81,8 +81,9 @@ impl ksni::Tray for CoolerTray {
     }
 
     fn icon_name(&self) -> String {
-        // The installed icon, where there is one; the pixmap otherwise.
-        "opencreative".into()
+        // The installed one-color icon, which the desktop recolors to match
+        // its panel; the bitmaps below where it isn't installed.
+        "opencreative-symbolic".into()
     }
 
     fn icon_pixmap(&self) -> Vec<Icon> {
@@ -182,24 +183,23 @@ impl ksni::Tray for CoolerTray {
     }
 }
 
-/// The app icon at tray sizes, as ARGB32 in network byte order.
+/// The one-color icon at tray sizes, white (top bars are dark), as ARGB32
+/// in network byte order.
 fn icons() -> &'static Vec<Icon> {
     static ICONS: OnceLock<Vec<Icon>> = OnceLock::new();
     ICONS.get_or_init(|| {
-        let Ok(png) =
-            image::load_from_memory(include_bytes!("../../../packaging/linux/opencreative.png"))
-        else {
-            return Vec::new();
-        };
-        [22, 32, 48, 64]
+        [16, 22, 24, 32, 48, 64]
             .into_iter()
             .map(|size| {
-                let rgba = png
-                    .resize_exact(size, size, image::imageops::FilterType::Lanczos3)
-                    .to_rgba8();
-                let data = rgba
+                let pm = crate::tray_icon::render(size, [255, 255, 255]);
+                // Premultiplied RGBA to straight ARGB.
+                let data = pm
                     .pixels()
-                    .flat_map(|p| [p[3], p[0], p[1], p[2]])
+                    .iter()
+                    .flat_map(|p| {
+                        let c = p.demultiply();
+                        [c.alpha(), c.red(), c.green(), c.blue()]
+                    })
                     .collect();
                 Icon {
                     width: size as i32,

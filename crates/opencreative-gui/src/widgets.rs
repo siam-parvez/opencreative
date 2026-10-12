@@ -92,20 +92,148 @@ pub fn section(ui: &mut egui::Ui, text: &str) {
     );
 }
 
-/// An accent value over a muted label, as in the dashboard cards.
-pub fn stat(ui: &mut egui::Ui, value: &str, label: &str) {
+/// Units a reading may end in, longest first.
+const UNITS: [&str; 13] = [
+    "KB/s", "MB/s", "GB/s", "TB/s", "B/s", "GHz", "°C", "GB", "MB", "KB", "TB", "W", "%",
+];
+
+/// Splits "1.82 GHz" into ("1.82", "GHz"); text without a known unit
+/// ("N/A", "—") is all number.
+pub fn split_unit(value: &str) -> (&str, &str) {
+    for unit in UNITS {
+        if let Some(number) = value.strip_suffix(unit) {
+            let number = number.trim_end();
+            if number.len() < value.len() - unit.len() || unit == "%" {
+                return (number, unit);
+            }
+        }
+    }
+    (value, "")
+}
+
+/// Slots for a reading: the number right-aligned in the first, the unit in
+/// the second, so only the digits move as the value changes.
+#[derive(Debug, Clone, Copy)]
+pub struct Slots {
+    pub number: f32,
+    pub unit: f32,
+}
+
+impl Slots {
+    /// Room for `template` (e.g. "8.88 GHz": the longest number expected,
+    /// and the widest unit) in `font`.
+    pub fn fit(ui: &egui::Ui, template: &str, font: &egui::FontId) -> Self {
+        let (number, unit) = split_unit(template);
+        let unit_w = if unit.is_empty() {
+            0.0
+        } else {
+            text_width(ui, unit, font)
+        };
+        Self {
+            number: tabular_width(ui, number, font),
+            unit: unit_w,
+        }
+    }
+
+    pub fn width(self) -> f32 {
+        if self.unit > 0.0 {
+            self.number + UNIT_GAP + self.unit
+        } else {
+            self.number
+        }
+    }
+}
+
+const UNIT_GAP: f32 = 4.0;
+
+fn text_width(ui: &egui::Ui, text: &str, font: &egui::FontId) -> f32 {
+    ui.painter()
+        .layout_no_wrap(text.to_owned(), font.clone(), Color32::WHITE)
+        .size()
+        .x
+}
+
+/// Every digit gets the widest digit's room, like a font's tabular figures:
+/// "1.82" and "4.55" take the same space.
+fn digit_width(ui: &egui::Ui, font: &egui::FontId) -> f32 {
+    ('0'..='9')
+        .map(|d| text_width(ui, &d.to_string(), font))
+        .fold(0.0, f32::max)
+}
+
+fn tabular_width(ui: &egui::Ui, text: &str, font: &egui::FontId) -> f32 {
+    let digit = digit_width(ui, font);
+    text.chars()
+        .map(|c| {
+            if c.is_ascii_digit() {
+                digit
+            } else {
+                text_width(ui, &c.to_string(), font)
+            }
+        })
+        .sum()
+}
+
+/// Paints `text` with tabular digits, starting at `x`.
+fn paint_tabular(ui: &egui::Ui, x: f32, y: f32, text: &str, font: &egui::FontId, color: Color32) {
+    let digit = digit_width(ui, font);
+    let mut x = x;
+    for c in text.chars() {
+        let s = c.to_string();
+        if c.is_ascii_digit() {
+            ui.painter().text(
+                pos2(x + digit / 2.0, y),
+                Align2::CENTER_CENTER,
+                &s,
+                font.clone(),
+                color,
+            );
+            x += digit;
+        } else {
+            ui.painter()
+                .text(pos2(x, y), Align2::LEFT_CENTER, &s, font.clone(), color);
+            x += text_width(ui, &s, font);
+        }
+    }
+}
+
+/// A reading in its [`Slots`]: tabular digits right-aligned against a unit
+/// that stays put (muted). Text with no unit ("N/A", "—") starts at the left.
+pub fn reading(ui: &mut egui::Ui, value: &str, font: egui::FontId, color: Color32, slots: Slots) {
     let p = Palette::of(ui.ctx());
+    let (number, unit) = split_unit(value);
+    let height = ui.fonts_mut(|f| f.row_height(&font));
+    let (rect, _) = ui.allocate_exact_size(vec2(slots.width(), height), Sense::hover());
+    let y = rect.center().y;
+    if unit.is_empty() {
+        ui.painter().text(
+            pos2(rect.left(), y),
+            Align2::LEFT_CENTER,
+            number,
+            font,
+            color,
+        );
+        return;
+    }
+    let number_right = rect.left() + slots.number;
+    let start = number_right - tabular_width(ui, number, &font);
+    paint_tabular(ui, start, y, number, &font, color);
+    ui.painter().text(
+        pos2(number_right + UNIT_GAP, y),
+        Align2::LEFT_CENTER,
+        unit,
+        font,
+        p.muted,
+    );
+}
+
+/// An accent reading over a muted label, as in the dashboard cards.
+pub fn stat(ui: &mut egui::Ui, value: &str, label: &str, template: &str) {
+    let p = Palette::of(ui.ctx());
+    let slots = Slots::fit(ui, template, &theme::medium(16.0));
     ui.vertical(|ui| {
         ui.spacing_mut().item_spacing.y = 0.0;
-        // Never wrap: a stat reads as one value and one label.
-        ui.add(
-            egui::Label::new(
-                egui::RichText::new(value)
-                    .font(theme::medium(16.0))
-                    .color(p.text),
-            )
-            .extend(),
-        );
+        reading(ui, value, theme::medium(16.0), p.text, slots);
         ui.add(
             egui::Label::new(
                 egui::RichText::new(label)
@@ -255,6 +383,17 @@ fn lerp_color(a: Color32, b: Color32, t: f32) -> Color32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn units_split_off_numbers() {
+        assert_eq!(split_unit("1.82 GHz"), ("1.82", "GHz"));
+        assert_eq!(split_unit("41 °C"), ("41", "°C"));
+        assert_eq!(split_unit("8.3 KB/s"), ("8.3", "KB/s"));
+        assert_eq!(split_unit("512 B/s"), ("512", "B/s"));
+        assert_eq!(split_unit("1.2 / 8.0 GB"), ("1.2 / 8.0", "GB"));
+        assert_eq!(split_unit("N/A"), ("N/A", ""));
+        assert_eq!(split_unit("—"), ("—", ""));
+    }
 
     #[test]
     fn formats_sizes_and_rates() {

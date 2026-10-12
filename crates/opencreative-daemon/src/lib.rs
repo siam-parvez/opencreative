@@ -5,6 +5,7 @@
 //! running.
 
 mod tray;
+mod tray_icon;
 
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Sender};
@@ -66,7 +67,8 @@ pub fn spawn(config_path: Option<PathBuf>, tray: bool) -> Result<Daemon> {
     let server = ipc::Server::bind(&socket)?;
     let stopper = server.stopper();
 
-    let player = Player::new(config.scene.to_scene()?, config.rotation()?);
+    let player = Player::new(config.scene.to_scene()?, config.rotation()?)
+        .with_shade(config.screen_theme.into());
     let (commands, receiver) = mpsc::channel();
     let state = Arc::new(Mutex::new(DaemonState::default()));
     let playback = {
@@ -238,6 +240,10 @@ impl Shared {
             // Session state, not a setting: the screen is on after a restart.
             Request::SetScreen { on } => Command::SetScreen(on),
             Request::SetZen { on } => Command::SetZen(on),
+            Request::SetScreenTheme { theme } => {
+                config.screen_theme = theme;
+                Command::SetShade(theme.into())
+            }
             Request::SetTray { on } => {
                 config.hide_tray = !on;
                 save(&self.config_path, &config);

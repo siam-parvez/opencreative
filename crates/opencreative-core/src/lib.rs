@@ -16,7 +16,9 @@ use std::time::{Duration, Instant};
 use opencreative_device::{self as device, Display};
 use opencreative_render::media::{self, Item, Source};
 use opencreative_render::video::{self, Stream};
-use opencreative_render::{Pixmap, Rotation, monitor, music, panels, rotate, solid, zen};
+use opencreative_render::{
+    Pixmap, Rotation, Shade, monitor, music, panels, rotate, shade, solid, zen,
+};
 use opencreative_sensors::Sensors;
 use thiserror::Error;
 
@@ -111,6 +113,8 @@ enum Content {
 pub struct Player {
     scene: Scene,
     rotation: Rotation,
+    /// Dark or light, for readings, music bars and Zen (not media).
+    shade: Shade,
     sensors: Option<Sensors>,
     media: Option<LoadedMedia>,
     /// Recent readings, oldest first, for skins that chart them.
@@ -141,6 +145,7 @@ impl Player {
         Self {
             scene,
             rotation,
+            shade: Shade::Dark,
             sensors,
             media: None,
             history: VecDeque::with_capacity(HISTORY),
@@ -161,6 +166,16 @@ impl Player {
         &self.scene
     }
 
+    /// This player with screens drawn in `shade`.
+    pub fn with_shade(mut self, shade: Shade) -> Self {
+        self.shade = shade;
+        self
+    }
+
+    pub fn shade(&self) -> Shade {
+        self.shade
+    }
+
     pub fn rotation(&self) -> Rotation {
         self.rotation
     }
@@ -179,8 +194,10 @@ impl Player {
             Scene::Monitor { interval } => {
                 let snap = self.sensors.get_or_insert_with(Sensors::new).read();
                 let clock = chrono::Local::now().format("%H:%M").to_string();
+                let mut frame = monitor::render(&snap, &clock, w, h);
+                shade::apply(&mut frame, self.shade);
                 Ok(Output {
-                    frame: rotate(&monitor::render(&snap, &clock, w, h), self.rotation),
+                    frame: rotate(&frame, self.rotation),
                     hold: Some(*interval),
                 })
             }
@@ -195,7 +212,8 @@ impl Player {
                 }
                 self.history.push_back(snap.clone());
                 let history = self.history.make_contiguous();
-                let frame = panels::render(&snap, history, layout, *skin, w, h);
+                let mut frame = panels::render(&snap, history, layout, *skin, w, h);
+                shade::apply(&mut frame, self.shade);
                 Ok(Output {
                     frame: rotate(&frame, self.rotation),
                     hold: Some(*interval),
@@ -204,8 +222,10 @@ impl Player {
             Scene::Zen => {
                 let snap = self.sensors.get_or_insert_with(Sensors::new).read();
                 let clock = chrono::Local::now().format("%H:%M").to_string();
+                let mut frame = zen::render(&snap, &clock, w, h);
+                shade::apply(&mut frame, self.shade);
                 Ok(Output {
-                    frame: rotate(&zen::render(&snap, &clock, w, h), self.rotation),
+                    frame: rotate(&frame, self.rotation),
                     hold: Some(Duration::from_secs(1)),
                 })
             }
@@ -220,8 +240,9 @@ impl Player {
             Scene::Music { look, bars } => {
                 let (look, bars) = (*look, *bars);
                 let (bands, message) = self.listen(bars);
-                let frame =
+                let mut frame =
                     music::render(&bands.levels, &bands.peaks, &look, message.as_deref(), w, h);
+                shade::apply(&mut frame, self.shade);
                 Ok(Output {
                     frame: rotate(&frame, self.rotation),
                     hold: Some(MUSIC_FRAME),

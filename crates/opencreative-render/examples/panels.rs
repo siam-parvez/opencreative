@@ -1,5 +1,6 @@
 //! Renders the Panels screen with sample values:
 //! `cargo run --example panels -- out.png [lines|hud|gauges] [landscape|portrait] [claude]`.
+//! Set `OPENCREATIVE_SHADE=light` for the light version.
 use opencreative_render::panels::{Layout, Skin, render};
 use opencreative_sensors::{ClaudeUsage, ClaudeWindow, Gpu, Metric, Snapshot};
 
@@ -68,5 +69,9 @@ fn main() {
     } else {
         render(&snap, &history, &layout, skin, w, h)
     };
+    let mut frame = frame;
+    if std::env::var("OPENCREATIVE_SHADE").as_deref() == Ok("light") {
+        opencreative_render::shade::apply(&mut frame, opencreative_render::Shade::Light);
+    }
     frame.save_png(path).unwrap();
 }

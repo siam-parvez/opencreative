@@ -195,7 +195,12 @@ fn parse_rotation(s: &str) -> Result<u16, String> {
 }
 
 fn main() -> Result<()> {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    // Our own messages at info; libraries (the tray's D-Bus connection
+    // logs every handshake) only when something's wrong.
+    env_logger::Builder::from_env(
+        env_logger::Env::default().default_filter_or("warn,opencreative=info"),
+    )
+    .init();
     let cli = Cli::parse();
     let rotation = cli
         .rotate

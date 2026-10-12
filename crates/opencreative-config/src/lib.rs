@@ -71,6 +71,33 @@ pub struct Config {
     /// Leave out the top-bar (tray) icon the background service shows.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub hide_tray: bool,
+    /// Dark or light screens (readings, music bars, Zen; not pictures).
+    #[serde(skip_serializing_if = "ScreenTheme::is_dark")]
+    pub screen_theme: ScreenTheme,
+}
+
+/// The look of drawn screens.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ScreenTheme {
+    #[default]
+    Dark,
+    Light,
+}
+
+impl ScreenTheme {
+    fn is_dark(&self) -> bool {
+        *self == ScreenTheme::Dark
+    }
+}
+
+impl From<ScreenTheme> for opencreative_render::Shade {
+    fn from(theme: ScreenTheme) -> Self {
+        match theme {
+            ScreenTheme::Dark => opencreative_render::Shade::Dark,
+            ScreenTheme::Light => opencreative_render::Shade::Light,
+        }
+    }
 }
 
 impl Config {
@@ -537,6 +564,7 @@ bars = 24
                 color: Rgb([0xff, 0x88, 0x00]),
             },
             hide_tray: true,
+            screen_theme: ScreenTheme::Light,
         };
         save(&path, &config).unwrap();
         assert!(fs::read_to_string(&path).unwrap().contains("\"#ff8800\""));

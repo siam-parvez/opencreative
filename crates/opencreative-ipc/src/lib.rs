@@ -17,7 +17,7 @@
 use std::io;
 use std::path::PathBuf;
 
-use opencreative_config::{Config, SceneConfig};
+use opencreative_config::{Config, SceneConfig, ScreenTheme};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -32,7 +32,7 @@ mod unsupported;
 pub use unsupported::{Client, Server, Stopper};
 
 /// Bumped on any incompatible change to [`Request`] or [`Response`].
-pub const PROTOCOL_VERSION: u32 = 7;
+pub const PROTOCOL_VERSION: u32 = 8;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "cmd", rename_all = "snake_case")]
@@ -64,6 +64,10 @@ pub enum Request {
     /// Shows or hides the background service's top-bar icon.
     SetTray {
         on: bool,
+    },
+    /// Dark or light screens.
+    SetScreenTheme {
+        theme: ScreenTheme,
     },
 }
 
