@@ -226,6 +226,48 @@ pub fn paint_mini_window(painter: &egui::Painter, rect: Rect, p: &Palette) {
     }
 }
 
+/// A quiet "go there" link: accent text and an arrow that nudges right on
+/// hover, over a faint raised background. For moving to another page, where
+/// a filled button would shout.
+pub fn arrow_link(ui: &mut egui::Ui, label: &str) -> Response {
+    let p = Palette::of(ui.ctx());
+    let font = theme::medium(14.0);
+    let pad = 10.0;
+    let arrow = 14.0;
+    // The text lines up with the content above; only the hover background
+    // reaches out into the left padding.
+    let size = vec2(text_width(ui, label, &font) + 8.0 + arrow + pad, 32.0);
+    let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+    let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+    let t = ui
+        .ctx()
+        .animate_bool_responsive(response.id.with("hover"), response.hovered());
+    let painter = ui.painter();
+    let fill = if response.is_pointer_button_down_on() {
+        p.track
+    } else {
+        p.raised.gamma_multiply(t)
+    };
+    let background = Rect::from_min_max(rect.min - vec2(pad, 0.0), rect.max);
+    painter.rect_filled(background, theme::SMALL_RADIUS, fill);
+    let text = painter.text(
+        pos2(rect.left(), rect.center().y),
+        Align2::LEFT_CENTER,
+        label,
+        font,
+        p.accent,
+    );
+    // A right arrow: shaft and head, sliding 3 points on hover.
+    let y = rect.center().y;
+    let x0 = text.right() + 8.0 + 3.0 * t;
+    let x1 = x0 + arrow - 3.0;
+    let stroke = Stroke::new(1.6, p.accent);
+    painter.line_segment([pos2(x0, y), pos2(x1, y)], stroke);
+    painter.line_segment([pos2(x1 - 4.5, y - 4.5), pos2(x1, y)], stroke);
+    painter.line_segment([pos2(x1 - 4.5, y + 4.5), pos2(x1, y)], stroke);
+    response
+}
+
 /// A small rounded status label, e.g. "Connected".
 pub fn chip(ui: &mut egui::Ui, text: &str, color: Color32) {
     egui::Frame::new()
