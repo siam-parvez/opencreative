@@ -226,6 +226,34 @@ pub fn paint_mini_window(painter: &egui::Painter, rect: Rect, p: &Palette) {
     }
 }
 
+/// The one main action on a page: an accent button that brightens on hover
+/// and deepens while pressed.
+pub fn primary_button(ui: &mut egui::Ui, label: &str) -> Response {
+    let p = Palette::of(ui.ctx());
+    let font = theme::medium(14.0);
+    let size = vec2(text_width(ui, label, &font) + 32.0, 34.0);
+    let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+    let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+    let hover = ui
+        .ctx()
+        .animate_bool_responsive(response.id.with("hover"), response.hovered());
+    let mut fill = lerp_color(p.accent, lerp_color(p.accent, Color32::WHITE, 0.18), hover);
+    if response.is_pointer_button_down_on() {
+        fill = lerp_color(p.accent, Color32::BLACK, 0.15);
+    }
+    let painter = ui.painter();
+    painter.rect_filled(rect, theme::SMALL_RADIUS, fill);
+    // Dark text reads on the cyan in both themes.
+    painter.text(
+        rect.center(),
+        Align2::CENTER_CENTER,
+        label,
+        font,
+        Color32::from_rgb(0x06, 0x1a, 0x1e),
+    );
+    response
+}
+
 /// A small rounded status label, e.g. "Connected".
 pub fn chip(ui: &mut egui::Ui, text: &str, color: Color32) {
     egui::Frame::new()

@@ -6,7 +6,7 @@ use crate::icons::{self, Icon};
 use crate::pages::header;
 use crate::prefs::{Finish, Model};
 use crate::theme::{self, Palette};
-use crate::widgets::{chip, segmented};
+use crate::widgets::{chip, primary_button, segmented};
 use crate::{App, Page};
 
 /// A product picture, its aspect ratio, and where the pump's screen sits in
@@ -54,7 +54,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         theme::card(ui, |ui| {
             ui.vertical_centered(|ui| {
                 ui.add_space(12.0);
-                picture(app, ui, 420.0, false);
+                picture(app, ui, ui.available_width().min(420.0), false);
                 ui.add_space(12.0);
                 ui.label(
                     egui::RichText::new("No supported cooler found")
@@ -86,72 +86,80 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     for (name, width, height, serial) in rows {
         let connected = app.device.as_deref() == Some(name);
         theme::card(ui, |ui| {
-            let picture_w = (ui.available_width() * 0.6).clamp(360.0, 640.0);
-            ui.horizontal(|ui| {
-                picture(app, ui, picture_w, connected);
-                ui.add_space(24.0);
-                ui.vertical(|ui| {
-                    ui.add_space(18.0);
-                    let (text, color) = if connected {
-                        ("Connected", p.good)
-                    } else {
-                        ("Found, not in use", p.faint)
-                    };
-                    chip(ui, text, color);
-                    ui.add_space(6.0);
-                    let title = app.device_title(name);
+            // Picture beside the details when there's room, above them when not.
+            const DETAILS_W: f32 = 300.0;
+            const GAP: f32 = 24.0;
+            let available = ui.available_width();
+            let side_by_side = available >= 360.0 + GAP + DETAILS_W;
+            let details = |app: &mut App, ui: &mut egui::Ui| {
+                let (text, color) = if connected {
+                    ("Connected", p.good)
+                } else {
+                    ("Found, not in use", p.faint)
+                };
+                chip(ui, text, color);
+                ui.add_space(6.0);
+                let title = app.device_title(name);
+                ui.label(
+                    egui::RichText::new(title)
+                        .font(theme::semibold(22.0))
+                        .color(p.text),
+                );
+                ui.label(
+                    egui::RichText::new(format!("{width} × {height} IPS screen · USB"))
+                        .color(p.muted),
+                );
+                if let Some(serial) = &serial {
                     ui.label(
-                        egui::RichText::new(title)
-                            .font(theme::semibold(22.0))
-                            .color(p.text),
-                    );
-                    ui.label(
-                        egui::RichText::new(format!("{width} × {height} IPS screen · USB"))
-                            .color(p.muted),
-                    );
-                    if let Some(serial) = &serial {
-                        ui.label(
-                            egui::RichText::new(format!("Serial {serial}"))
-                                .small()
-                                .color(p.faint),
-                        );
-                    }
-                    ui.add_space(14.0);
-                    ui.label(
-                        egui::RichText::new("Model and finish (for the picture)")
+                        egui::RichText::new(format!("Serial {serial}"))
                             .small()
-                            .color(p.muted),
+                            .color(p.faint),
                     );
-                    ui.horizontal(|ui| {
-                        let mut model = app.prefs.model;
-                        let mut finish = app.prefs.finish;
-                        let changed = segmented(
-                            ui,
-                            &mut model,
-                            &[(Model::Lm240, "LM240"), (Model::Lm360, "LM360")],
-                        ) | segmented(
-                            ui,
-                            &mut finish,
-                            &[(Finish::Black, "Black"), (Finish::White, "White")],
-                        );
-                        if changed {
-                            app.prefs.model = model;
-                            app.prefs.finish = finish;
-                            app.save_prefs();
-                        }
-                    });
-                    ui.add_space(14.0);
-                    let button = egui::Button::new(
-                        egui::RichText::new("Customize screen").color(Color32::BLACK),
-                    )
-                    .fill(p.accent)
-                    .stroke(egui::Stroke::NONE)
-                    .corner_radius(theme::SMALL_RADIUS);
-                    if ui.add(button).clicked() {
-                        app.page = Page::Device;
+                }
+                ui.add_space(14.0);
+                ui.label(
+                    egui::RichText::new("Model and finish (for the picture)")
+                        .small()
+                        .color(p.muted),
+                );
+                ui.horizontal_wrapped(|ui| {
+                    let mut model = app.prefs.model;
+                    let mut finish = app.prefs.finish;
+                    let changed = segmented(
+                        ui,
+                        &mut model,
+                        &[(Model::Lm240, "LM240"), (Model::Lm360, "LM360")],
+                    ) | segmented(
+                        ui,
+                        &mut finish,
+                        &[(Finish::Black, "Black"), (Finish::White, "White")],
+                    );
+                    if changed {
+                        app.prefs.model = model;
+                        app.prefs.finish = finish;
+                        app.save_prefs();
                     }
                 });
-            });
+                ui.add_space(14.0);
+                if primary_button(ui, "Customize screen").clicked() {
+                    app.page = Page::Device;
+                }
+            };
+            if side_by_side {
+                let picture_w = (available - GAP - DETAILS_W).min(640.0);
+                ui.horizontal(|ui| {
+                    picture(app, ui, picture_w, connected);
+                    ui.add_space(GAP);
+                    ui.vertical(|ui| {
+                        ui.add_space(18.0);
+                        details(app, ui);
+                    });
+                });
+            } else {
+                ui.vertical_centered(|ui| picture(app, ui, available.min(560.0), connected));
+                ui.add_space(12.0);
+                details(app, ui);
+            }
         });
         ui.add_space(14.0);
     }
