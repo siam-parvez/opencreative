@@ -172,8 +172,8 @@ pub fn install(ctx: &egui::Context) {
             style.spacing.combo_width = 200.0;
             // An app, not a document: labels shouldn't be text-selectable.
             style.interaction.selectable_labels = false;
-            // A scrollbar with its own gutter, so it never covers card edges.
-            style.spacing.scroll = egui::style::ScrollStyle::solid();
+            // Pages scroll with the wheel or touchpad; no scrollbar.
+            style.spacing.scroll = egui::style::ScrollStyle::floating();
         });
     }
 }
@@ -195,9 +195,9 @@ fn visuals(p: &Palette, dark: bool) -> Visuals {
     v.slider_trailing_fill = true;
     v.handle_shape = egui::style::HandleShape::Circle;
     v.indent_has_left_vline = false;
-    let radius = CornerRadius::same(6);
-    v.window_corner_radius = CornerRadius::same(10);
-    v.menu_corner_radius = CornerRadius::same(8);
+    let radius = CornerRadius::same(SMALL_RADIUS);
+    v.window_corner_radius = CornerRadius::same(RADIUS);
+    v.menu_corner_radius = CornerRadius::same(SMALL_RADIUS);
     for w in [
         &mut v.widgets.noninteractive,
         &mut v.widgets.inactive,
@@ -226,12 +226,17 @@ fn visuals(p: &Palette, dark: bool) -> Visuals {
 }
 
 /// A white (or dark) rounded card with a hairline border.
+/// Corner radius of cards, panels and dialogs: nearly square.
+pub const RADIUS: u8 = 4;
+/// Corner radius of buttons, rows, menus and other small parts.
+pub const SMALL_RADIUS: u8 = 3;
+
 pub fn card<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
     let p = Palette::of(ui.ctx());
     Frame::new()
         .fill(p.card)
         .stroke(Stroke::new(1.0, p.border))
-        .corner_radius(12)
+        .corner_radius(RADIUS)
         .inner_margin(Margin::same(20))
         .show(ui, |ui| {
             // Fill the column, so cards side by side line up.

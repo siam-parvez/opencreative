@@ -38,7 +38,7 @@ pub fn segmented<T: PartialEq + Copy>(
     egui::Frame::new()
         .fill(p.control)
         .stroke(Stroke::new(1.0, p.border))
-        .corner_radius(8)
+        .corner_radius(theme::SMALL_RADIUS)
         .inner_margin(3)
         .show(ui, |ui| {
             ui.spacing_mut().item_spacing.x = 2.0;
@@ -60,7 +60,7 @@ pub fn segmented<T: PartialEq + Copy>(
                             Color32::TRANSPARENT
                         })
                         .stroke(Stroke::NONE)
-                        .corner_radius(6);
+                        .corner_radius(theme::SMALL_RADIUS);
                     if ui.add(button).clicked() && !selected {
                         *value = *option;
                         changed = true;
@@ -75,7 +75,7 @@ pub fn segmented<T: PartialEq + Copy>(
 pub fn chip(ui: &mut egui::Ui, text: &str, color: Color32) {
     egui::Frame::new()
         .fill(color.gamma_multiply(0.15))
-        .corner_radius(10)
+        .corner_radius(theme::RADIUS)
         .inner_margin(egui::Margin::symmetric(10, 3))
         .show(ui, |ui| {
             ui.label(egui::RichText::new(text).small().color(color));
@@ -162,40 +162,33 @@ pub fn gauge(
         painter.circle_filled(tip, width * 1.1, color.gamma_multiply(0.18));
     }
 
-    let value_font = theme::numeric(diameter * 0.2);
-    let unit_font = theme::regular(diameter * 0.085);
-    let value_w = painter
-        .layout_no_wrap(value.to_owned(), value_font.clone(), p.text)
-        .size()
-        .x;
-    let unit_w = if unit.is_empty() {
-        0.0
-    } else {
-        painter
-            .layout_no_wrap(unit.to_owned(), unit_font.clone(), p.muted)
-            .size()
-            .x
-            + 4.0
-    };
-    let left = center.x - (value_w + unit_w) / 2.0;
-    painter.text(
-        pos2(left, center.y),
-        Align2::LEFT_CENTER,
-        value,
-        value_font,
-        p.text,
-    );
-    if !unit.is_empty() {
-        painter.text(
-            pos2(left + value_w + 4.0, center.y + diameter * 0.03),
-            Align2::LEFT_CENTER,
-            unit,
-            unit_font,
-            p.muted,
+    // Placed by the digits' ink, not the font's line box (the numeric font
+    // has room above its digits). The ring is open at the bottom and the
+    // caption sits below, so the number goes a little above the true center
+    // to look centered.
+    let middle = center.y - radius * 0.1;
+    let value = painter.layout_no_wrap(value.to_owned(), theme::numeric(diameter * 0.2), p.text);
+    let ink = value.mesh_bounds;
+    let unit = (!unit.is_empty()).then(|| {
+        painter.layout_no_wrap(unit.to_owned(), theme::regular(diameter * 0.085), p.muted)
+    });
+    let gap = 4.0;
+    let unit_w = unit.as_ref().map_or(0.0, |u| gap + u.mesh_bounds.width());
+    let left = center.x - (ink.width() + unit_w) / 2.0;
+    let value_pos = pos2(left - ink.min.x, middle - ink.center().y);
+    // The unit sits on the digits' baseline.
+    let baseline = middle + ink.height() / 2.0;
+    painter.galley(value_pos, value, p.text);
+    if let Some(unit) = unit {
+        let unit_ink = unit.mesh_bounds;
+        let pos = pos2(
+            left + ink.width() + gap - unit_ink.min.x,
+            baseline - unit_ink.max.y,
         );
+        painter.galley(pos, unit, p.muted);
     }
     painter.text(
-        pos2(center.x, center.y + radius * 0.5),
+        pos2(center.x, center.y + radius * 0.42),
         Align2::CENTER_CENTER,
         caption,
         theme::regular(12.0),
@@ -270,5 +263,133 @@ mod tests {
         assert_eq!(bytes(19.6 * 1024.0 * 1024.0 * 1024.0), "19.6 GB");
         assert_eq!(bytes(150.0 * 1024.0 * 1024.0 * 1024.0), "150 GB");
         assert_eq!(rate(8.3 * 1024.0), "8.3 KB/s");
+    }
+}
+
+/// A pick in a [`swatches`] row.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Swatch {
+    /// Every bar its own color, by pitch.
+    Rainbow,
+    Color([u8; 3]),
+}
+
+/// A row of round color swatches: an optional rainbow, the presets, and a
+/// custom one that opens a color picker. Returns the new pick when it
+/// changes.
+pub fn swatches(
+    ui: &mut egui::Ui,
+    id: &str,
+    current: Swatch,
+    presets: &[[u8; 3]],
+    rainbow: bool,
+) -> Option<Swatch> {
+    let p = Palette::of(ui.ctx());
+    let mut picked = None;
+    let size = vec2(26.0, 26.0);
+    let ring = |ui: &egui::Ui, rect: Rect, selected: bool| {
+        let color = if selected { p.accent } else { p.border };
+        let width = if selected { 2.0 } else { 1.0 };
+        ui.painter()
+            .circle_stroke(rect.center(), 12.0, Stroke::new(width, color));
+    };
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing.x = 6.0;
+        if rainbow {
+            let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+            paint_rainbow(ui, rect.center(), 10.0);
+            ring(ui, rect, current == Swatch::Rainbow);
+            if response
+                .on_hover_text("Rainbow: each bar by its pitch")
+                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                .clicked()
+            {
+                picked = Some(Swatch::Rainbow);
+            }
+        }
+        for &rgb in presets {
+            let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+            let fill = Color32::from_rgb(rgb[0], rgb[1], rgb[2]);
+            ui.painter().circle_filled(rect.center(), 10.0, fill);
+            ring(ui, rect, current == Swatch::Color(rgb));
+            if response
+                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                .clicked()
+            {
+                picked = Some(Swatch::Color(rgb));
+            }
+        }
+
+        // Custom: shows the chosen color when it isn't a preset, and
+        // remembers the last one picked.
+        let memory = egui::Id::new(("custom-swatch", id));
+        let is_custom = matches!(current, Swatch::Color(c) if !presets.contains(&c));
+        let mut custom: [u8; 3] = match current {
+            Swatch::Color(c) if is_custom => c,
+            _ => ui
+                .ctx()
+                .data(|d| d.get_temp(memory))
+                .unwrap_or([0x80, 0x80, 0x80]),
+        };
+        let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+        let fill = Color32::from_rgb(custom[0], custom[1], custom[2]);
+        ui.painter().circle_filled(rect.center(), 10.0, fill);
+        // A plus marks it as the custom picker.
+        let plus = if (custom.iter().map(|&v| u32::from(v)).sum::<u32>()) > 380 {
+            Color32::BLACK
+        } else {
+            Color32::WHITE
+        };
+        let c = rect.center();
+        ui.painter().line_segment(
+            [c - vec2(4.0, 0.0), c + vec2(4.0, 0.0)],
+            Stroke::new(1.5, plus),
+        );
+        ui.painter().line_segment(
+            [c - vec2(0.0, 4.0), c + vec2(0.0, 4.0)],
+            Stroke::new(1.5, plus),
+        );
+        ring(ui, rect, is_custom);
+        let response = response
+            .on_hover_text("Custom color")
+            .on_hover_cursor(egui::CursorIcon::PointingHand);
+        egui::Popup::from_toggle_button_response(&response)
+            .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+            .show(|ui| {
+                let mut color = Color32::from_rgb(custom[0], custom[1], custom[2]);
+                if egui::color_picker::color_picker_color32(
+                    ui,
+                    &mut color,
+                    egui::color_picker::Alpha::Opaque,
+                ) {
+                    custom = [color.r(), color.g(), color.b()];
+                    picked = Some(Swatch::Color(custom));
+                }
+            });
+        if response.clicked() && !is_custom && picked.is_none() {
+            picked = Some(Swatch::Color(custom));
+        }
+        ui.ctx().data_mut(|d| d.insert_temp(memory, custom));
+    });
+    picked.filter(|&new| new != current)
+}
+
+/// A color wheel: wedges going round the hues.
+fn paint_rainbow(ui: &egui::Ui, center: egui::Pos2, radius: f32) {
+    const WEDGES: usize = 24;
+    for i in 0..WEDGES {
+        let a0 = std::f32::consts::TAU * i as f32 / WEDGES as f32;
+        let a1 = std::f32::consts::TAU * (i + 1) as f32 / WEDGES as f32;
+        let hsva = egui::ecolor::Hsva::new(i as f32 / WEDGES as f32, 1.0, 1.0, 1.0);
+        let points = vec![
+            center,
+            center + radius * vec2(a0.cos(), a0.sin()),
+            center + radius * vec2(a1.cos(), a1.sin()),
+        ];
+        ui.painter().add(egui::Shape::convex_polygon(
+            points,
+            Color32::from(hsva),
+            Stroke::NONE,
+        ));
     }
 }

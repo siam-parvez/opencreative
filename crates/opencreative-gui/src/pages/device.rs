@@ -11,7 +11,7 @@ use opencreative_render::panels::Layout;
 use crate::icons::{self, Icon};
 use crate::library::MediaKind;
 use crate::theme::{self, Palette};
-use crate::widgets::{section, segmented, toggle};
+use crate::widgets::{Swatch, section, segmented, swatches, toggle};
 use crate::{App, Page, is_digital, is_music};
 
 const CONTROLS_WIDTH: f32 = 300.0;
@@ -156,7 +156,7 @@ fn notice(app: &mut App, ui: &mut egui::Ui) {
     egui::Frame::new()
         .fill(p.warn.gamma_multiply(0.12))
         .stroke(Stroke::new(1.0, p.warn.gamma_multiply(0.5)))
-        .corner_radius(10)
+        .corner_radius(theme::RADIUS)
         .inner_margin(14)
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
@@ -271,7 +271,7 @@ fn preview(app: &mut App, ui: &mut egui::Ui) {
             ui.allocate_exact_size(screen + vec2(2.0 * pad, 2.0 * pad), Sense::drag());
         pan_and_zoom(app, ui, &response, screen);
         let painter = ui.painter();
-        painter.rect_filled(bezel, 16.0, p.bezel);
+        painter.rect_filled(bezel, theme::RADIUS as f32, p.bezel);
         let inner = snap_to_pixels(bezel.shrink(pad), ppp, screen);
         match &app.preview.texture {
             Some(texture) => {
@@ -516,13 +516,16 @@ fn skin_gallery(
             };
             let response = egui::Frame::new()
                 .stroke(stroke)
-                .corner_radius(10)
+                .corner_radius(theme::RADIUS)
                 .inner_margin(8)
                 .show(ui, |ui| {
                     // Keep each card as narrow as its thumbnail.
                     ui.set_max_width(size.x);
                     ui.vertical_centered(|ui| {
-                        ui.add(egui::Image::new((texture.id(), size)).corner_radius(6));
+                        ui.add(
+                            egui::Image::new((texture.id(), size))
+                                .corner_radius(theme::SMALL_RADIUS),
+                        );
                         ui.label(egui::RichText::new(look.name()).color(if selected {
                             p.accent
                         } else {
@@ -678,34 +681,23 @@ fn music(app: &mut App, ui: &mut egui::Ui) {
     ui.add_space(12.0);
 
     section(ui, "Color");
-    ui.horizontal(|ui| {
-        ui.label(egui::RichText::new("By pitch (rainbow)").color(p.text));
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            changed |= toggle(ui, &mut rainbow).changed();
-        });
-    });
-    ui.add_space(6.0);
-    ui.add_enabled_ui(!rainbow, |ui| {
-        ui.horizontal(|ui| {
-            changed |= ui.color_edit_button_srgb(&mut rgb).changed();
-            ui.add_space(8.0);
-            for swatch in SWATCHES {
-                let (rect, response) = ui.allocate_exact_size(vec2(24.0, 24.0), Sense::click());
-                let fill = Color32::from_rgb(swatch[0], swatch[1], swatch[2]);
-                ui.painter().circle_filled(rect.center(), 10.0, fill);
-                let ring = if swatch == rgb { p.accent } else { p.border };
-                ui.painter()
-                    .circle_stroke(rect.center(), 11.5, Stroke::new(1.5, ring));
-                if response
-                    .on_hover_cursor(egui::CursorIcon::PointingHand)
-                    .clicked()
-                {
-                    rgb = swatch;
-                    changed = true;
-                }
-            }
-        });
-    });
+    let current = if rainbow {
+        Swatch::Rainbow
+    } else {
+        Swatch::Color(rgb)
+    };
+    match swatches(ui, "music", current, &SWATCHES, true) {
+        Some(Swatch::Rainbow) => {
+            rainbow = true;
+            changed = true;
+        }
+        Some(Swatch::Color(c)) => {
+            rainbow = false;
+            rgb = c;
+            changed = true;
+        }
+        None => {}
+    }
     ui.add_space(12.0);
     ui.label(
         egui::RichText::new(
@@ -728,7 +720,6 @@ fn music(app: &mut App, ui: &mut egui::Ui) {
 }
 
 fn multimedia(app: &mut App, ui: &mut egui::Ui) {
-    let p = Palette::of(ui.ctx());
     let scene = app.applied.scene.clone();
 
     section(ui, "Source");
@@ -762,26 +753,10 @@ fn multimedia(app: &mut App, ui: &mut egui::Ui) {
             SceneConfig::Solid { color } => color.0,
             _ => SWATCHES[0],
         };
-        let mut picked = rgb;
-        ui.horizontal(|ui| {
-            ui.label(egui::RichText::new("Color").color(p.muted));
-            ui.color_edit_button_srgb(&mut picked);
-            ui.add_space(8.0);
-            for swatch in SWATCHES {
-                let (rect, response) = ui.allocate_exact_size(vec2(24.0, 24.0), Sense::click());
-                let fill = Color32::from_rgb(swatch[0], swatch[1], swatch[2]);
-                ui.painter().circle_filled(rect.center(), 10.0, fill);
-                let ring = if swatch == rgb { p.accent } else { p.border };
-                ui.painter()
-                    .circle_stroke(rect.center(), 11.5, Stroke::new(1.5, ring));
-                if response
-                    .on_hover_cursor(egui::CursorIcon::PointingHand)
-                    .clicked()
-                {
-                    picked = swatch;
-                }
-            }
-        });
+        let picked = match swatches(ui, "solid", Swatch::Color(rgb), &SWATCHES, false) {
+            Some(Swatch::Color(c)) => c,
+            _ => rgb,
+        };
         if picked != rgb {
             app.set_scene(SceneConfig::Solid { color: Rgb(picked) });
         }
@@ -825,7 +800,7 @@ fn playlist(app: &mut App, ui: &mut egui::Ui, kind: MediaKind) {
                     p.border
                 },
             ))
-            .corner_radius(8)
+            .corner_radius(theme::SMALL_RADIUS)
             .inner_margin(egui::Margin::symmetric(10, 6));
         // The row's click is registered before its buttons, so the buttons
         // (on top) get their own clicks.
@@ -1125,7 +1100,7 @@ fn ytdlp_notice(app: &mut App, ui: &mut egui::Ui) {
     egui::Frame::new()
         .fill(p.warn.gamma_multiply(0.12))
         .stroke(Stroke::new(1.0, p.warn.gamma_multiply(0.5)))
-        .corner_radius(10)
+        .corner_radius(theme::RADIUS)
         .inner_margin(12)
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
@@ -1164,7 +1139,7 @@ fn drop_zone(app: &mut App, ui: &mut egui::Ui, kind: MediaKind) {
     egui::Frame::new()
         .fill(p.accent_soft)
         .stroke(Stroke::new(1.0, p.accent.gamma_multiply(0.6)))
-        .corner_radius(10)
+        .corner_radius(theme::RADIUS)
         .inner_margin(18)
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
@@ -1195,7 +1170,8 @@ fn icon_button(ui: &mut egui::Ui, icon: Icon, tooltip: &str) -> egui::Response {
     let p = Palette::of(ui.ctx());
     let (rect, response) = ui.allocate_exact_size(vec2(30.0, 30.0), Sense::click());
     if response.hovered() {
-        ui.painter().rect_filled(rect, 6.0, p.raised);
+        ui.painter()
+            .rect_filled(rect, theme::SMALL_RADIUS as f32, p.raised);
     }
     icons::paint(ui, rect.shrink(7.0), icon, p.muted);
     response

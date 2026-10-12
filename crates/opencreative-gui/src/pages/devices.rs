@@ -146,7 +146,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                     )
                     .fill(p.accent)
                     .stroke(egui::Stroke::NONE)
-                    .corner_radius(8);
+                    .corner_radius(theme::SMALL_RADIUS);
                     if ui.add(button).clicked() {
                         app.page = Page::Device;
                     }
@@ -188,14 +188,14 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
 
 /// The cooler's product picture in the chosen finish, with the live preview
 /// on the pump's screen when it's the connected one.
-fn picture(app: &App, ui: &mut egui::Ui, width: f32, connected: bool) {
+fn picture(app: &mut App, ui: &mut egui::Ui, width: f32, connected: bool) {
     let pic = picture_of(app.prefs.model, app.prefs.finish);
     let size = vec2(width, width / pic.aspect);
     let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
     egui::Image::new(pic.source)
         .fit_to_exact_size(size)
         .paint_at(ui, rect);
-    if let (Some(texture), true) = (&app.preview.texture, connected) {
+    if connected {
         let at = |x: f32, y: f32| {
             pos2(
                 rect.left() + x * rect.width(),
@@ -206,8 +206,25 @@ fn picture(app: &App, ui: &mut egui::Ui, width: f32, connected: bool) {
             at(pic.screen.min.x, pic.screen.min.y),
             at(pic.screen.max.x, pic.screen.max.y),
         );
+        // Whole physical pixels, resampled to exactly that size.
+        let ppp = ui.ctx().pixels_per_point();
+        let pixels = [
+            (screen.width() * ppp).round() as usize,
+            (screen.height() * ppp).round() as usize,
+        ];
+        let screen = Rect::from_min_size(
+            pos2(
+                (screen.min.x * ppp).round() / ppp,
+                (screen.min.y * ppp).round() / ppp,
+            ),
+            vec2(pixels[0] as f32, pixels[1] as f32) / ppp,
+        );
+        let ctx = ui.ctx().clone();
+        let Some(texture) = app.preview.small(&ctx, pixels) else {
+            return;
+        };
         ui.painter().image(
-            texture.id(),
+            texture,
             screen,
             Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
             Color32::WHITE,

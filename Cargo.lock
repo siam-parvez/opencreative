@@ -2621,6 +2621,7 @@ dependencies = [
  "opencreative-config",
  "opencreative-core",
  "opencreative-ipc",
+ "opencreative-protocol",
  "opencreative-render",
 ]
 
@@ -2665,6 +2666,7 @@ dependencies = [
 name = "opencreative-ipc"
 version = "0.4.1"
 dependencies = [
+ "base64 0.22.1",
  "dirs",
  "log",
  "opencreative-config",

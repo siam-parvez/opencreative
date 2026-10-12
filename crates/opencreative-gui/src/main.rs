@@ -154,8 +154,93 @@ pub struct Preview {
     key: Option<(SceneConfig, u16, bool)>,
     pub texture: Option<egui::TextureHandle>,
     pub size: (u32, u32),
+    /// The shown frame's pixels, upright, in the panel's colors.
+    pub rgba: Vec<u8>,
+    /// Counts up with every new frame, for pages that resample it.
+    pub version: u64,
+    /// The daemon's number for the cooler frame shown, when mirroring it.
+    mirror_seq: u64,
+    /// A smaller copy for small pictures: (frame version, pixel size).
+    small: Option<(u64, [usize; 2], egui::TextureHandle)>,
     next_frame: Instant,
     pub error: Option<String>,
+}
+
+impl Preview {
+    /// Shows `rgba` (upright, `size`, panel colors).
+    fn show(&mut self, ctx: &egui::Context, rgba: Vec<u8>, size: (u32, u32)) {
+        let image =
+            egui::ColorImage::from_rgba_unmultiplied([size.0 as usize, size.1 as usize], &rgba);
+        match &mut self.texture {
+            Some(texture) => texture.set(image, PIXEL_TEXTURE),
+            None => self.texture = Some(ctx.load_texture("preview", image, PIXEL_TEXTURE)),
+        }
+        self.size = size;
+        self.rgba = rgba;
+        self.version += 1;
+    }
+
+    /// The frame resampled to exactly `pixels`, for showing it small:
+    /// averaging each block of source pixels stays sharp where the GPU's
+    /// scaling would blur and shimmer.
+    pub fn small(&mut self, ctx: &egui::Context, pixels: [usize; 2]) -> Option<egui::TextureId> {
+        let (w, h) = (self.size.0 as usize, self.size.1 as usize);
+        if self.rgba.len() != w * h * 4 || pixels[0] == 0 || pixels[1] == 0 {
+            return None;
+        }
+        if pixels[0] >= w || pixels[1] >= h {
+            return self.texture.as_ref().map(|t| t.id());
+        }
+        let stale = !matches!(&self.small, Some((v, px, _)) if *v == self.version && *px == pixels);
+        if stale {
+            let rgba = shrink(&self.rgba, [w, h], pixels);
+            let image = egui::ColorImage::from_rgba_unmultiplied(pixels, &rgba);
+            let options = egui::TextureOptions::NEAREST;
+            match &mut self.small {
+                Some((v, px, texture)) => {
+                    texture.set(image, options);
+                    (*v, *px) = (self.version, pixels);
+                }
+                None => {
+                    let texture = ctx.load_texture("preview-small", image, options);
+                    self.small = Some((self.version, pixels, texture));
+                }
+            }
+        }
+        self.small.as_ref().map(|(_, _, t)| t.id())
+    }
+}
+
+/// Area-averages `rgba` (`from` pixels) down to `to` pixels.
+fn shrink(rgba: &[u8], from: [usize; 2], to: [usize; 2]) -> Vec<u8> {
+    let mut out = vec![0u8; to[0] * to[1] * 4];
+    for ty in 0..to[1] {
+        let (y0, y1) = (
+            ty * from[1] / to[1],
+            ((ty + 1) * from[1] / to[1]).max(ty * from[1] / to[1] + 1),
+        );
+        for tx in 0..to[0] {
+            let (x0, x1) = (
+                tx * from[0] / to[0],
+                ((tx + 1) * from[0] / to[0]).max(tx * from[0] / to[0] + 1),
+            );
+            let mut sum = [0u32; 4];
+            for y in y0..y1 {
+                for x in x0..x1 {
+                    let i = (y * from[0] + x) * 4;
+                    for c in 0..4 {
+                        sum[c] += u32::from(rgba[i + c]);
+                    }
+                }
+            }
+            let n = ((y1 - y0) * (x1 - x0)) as u32;
+            let o = (ty * to[0] + tx) * 4;
+            for c in 0..4 {
+                out[o + c] = ((sum[c] + n / 2) / n) as u8;
+            }
+        }
+    }
+    out
 }
 
 struct Toast {
@@ -251,6 +336,10 @@ pub struct App {
 impl App {
     fn new(cc: &eframe::CreationContext<'_>) -> Self {
         theme::install(&cc.egui_ctx);
+        // A page's first frame may need redrawing twice before it's shown
+        // (new page, then card heights); it never flashes half laid out.
+        cc.egui_ctx
+            .options_mut(|o| o.max_passes = std::num::NonZeroUsize::new(3).expect("non-zero"));
         egui_extras::install_image_loaders(&cc.egui_ctx);
         let mut prefs = prefs::load();
         // For screenshots: show the integration without saving the choice.
@@ -310,6 +399,10 @@ impl App {
                 key: None,
                 texture: None,
                 size: (0, 0),
+                rgba: Vec::new(),
+                version: 0,
+                mirror_seq: 0,
+                small: None,
                 next_frame: Instant::now(),
                 error: None,
             },
@@ -823,8 +916,14 @@ impl App {
         }
     }
 
-    /// Re-renders the preview when the scene changes or a frame is due.
+    /// Keeps the preview current: the cooler's own frames while it's
+    /// showing them, else a local render (no cooler, or an edit that's only
+    /// in the preview so far).
     fn update_preview(&mut self, ctx: &egui::Context) {
+        if self.draft_scene.is_none() && self.device.is_some() && self.screen_on && self.mirror(ctx)
+        {
+            return;
+        }
         let p = &mut self.preview;
         let scene = self
             .draft_scene
@@ -864,16 +963,8 @@ impl App {
                 Ok(out) => {
                     // Exactly what the panel shows: its 16-bit color.
                     let rgba = panel_colors(out.frame.data(), p.size.0);
-                    let image = egui::ColorImage::from_rgba_unmultiplied(
-                        [p.size.0 as usize, p.size.1 as usize],
-                        &rgba,
-                    );
-                    match &mut p.texture {
-                        Some(texture) => texture.set(image, PIXEL_TEXTURE),
-                        None => {
-                            p.texture = Some(ctx.load_texture("preview", image, PIXEL_TEXTURE));
-                        }
-                    }
+                    let size = p.size;
+                    p.show(ctx, rgba, size);
                     p.next_frame = now + out.hold.unwrap_or(Duration::from_secs(3600));
                 }
                 Err(e) => {
@@ -883,6 +974,42 @@ impl App {
             }
         }
         ctx.request_repaint_after(p.next_frame.saturating_duration_since(now));
+    }
+
+    /// Shows the frame the cooler is showing, fetched from the daemon. False
+    /// when there's none to show, so the caller renders one itself.
+    fn mirror(&mut self, ctx: &egui::Context) -> bool {
+        /// About the fastest the cooler changes (music bars, videos).
+        const POLL: Duration = Duration::from_millis(33);
+        let Some(client) = self.client.as_mut() else {
+            return false;
+        };
+        let p = &mut self.preview;
+        match client.request(&Request::Frame {
+            after: p.mirror_seq,
+        }) {
+            Ok(Response::Frame { frame: Some(frame) }) => {
+                let Some(rgb565) = frame.rgb565() else {
+                    return false;
+                };
+                let rgba = pixel::rgb565_le_to_rgba(&rgb565);
+                let rotation = Rotation::from_degrees(frame.rotation).unwrap_or_default();
+                let (rgba, w, h) =
+                    opencreative_render::upright(&rgba, frame.width, frame.height, rotation);
+                p.show(ctx, rgba, (w, h));
+                p.mirror_seq = frame.seq;
+                p.error = None;
+                // The local renderer (and any video or audio it holds) isn't
+                // needed while mirroring.
+                p.player = None;
+                p.key = None;
+            }
+            // Nothing new; fine once something has been shown.
+            Ok(Response::Frame { frame: None }) if p.mirror_seq != 0 && p.player.is_none() => {}
+            _ => return false,
+        }
+        ctx.request_repaint_after(POLL);
+        true
     }
 
     fn logo(&mut self, ctx: &egui::Context) -> egui::TextureId {
@@ -1023,14 +1150,18 @@ impl App {
         let selected = self.page == page;
         let painter = ui.painter();
         if selected {
-            painter.rect_filled(rect, 8.0, p.raised);
+            painter.rect_filled(rect, theme::SMALL_RADIUS as f32, p.raised);
             let bar = egui::Rect::from_center_size(
                 pos2(rect.left() + 1.5, rect.center().y),
                 vec2(3.0, 16.0),
             );
             painter.rect_filled(bar, 2.0, p.accent);
         } else if response.hovered() {
-            painter.rect_filled(rect, 8.0, p.raised.gamma_multiply(0.6));
+            painter.rect_filled(
+                rect,
+                theme::SMALL_RADIUS as f32,
+                p.raised.gamma_multiply(0.6),
+            );
         }
         let color = if selected { p.text } else { p.muted };
         let icon_rect = egui::Rect::from_center_size(
@@ -1075,7 +1206,7 @@ impl App {
                 Frame::new()
                     .fill(p.card)
                     .stroke(Stroke::new(1.0, p.border))
-                    .corner_radius(12)
+                    .corner_radius(theme::RADIUS)
                     .inner_margin(Margin::same(24)),
             )
             .show(ctx, |ui| {
@@ -1157,7 +1288,7 @@ impl App {
                 Frame::new()
                     .fill(p.raised)
                     .stroke(Stroke::new(1.0, if error { p.bad } else { p.border }))
-                    .corner_radius(10)
+                    .corner_radius(theme::RADIUS)
                     .inner_margin(Margin::symmetric(14, 10))
                     .show(ui, |ui| {
                         ui.set_max_width(420.0);
@@ -1339,13 +1470,12 @@ impl eframe::App for App {
         egui::CentralPanel::default()
             .frame(Frame::new().fill(p.bg).inner_margin(Margin::same(28)))
             .show(ui, |ui| {
-                // Each page keeps its own scroll position, and the scrollbar's
-                // gutter is always there, so content is equally wide on short
-                // and long pages.
+                // Each page keeps its own scroll position. No scrollbar, so
+                // content is equally wide on short and long pages.
                 egui::ScrollArea::vertical()
                     .id_salt(self.page)
                     .auto_shrink([false, false])
-                    .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
+                    .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
                     .show(ui, |ui| match self.page {
                         Page::Dashboard => pages::dashboard::show(self, ui),
                         Page::Devices => pages::devices::show(self, ui),
@@ -1395,6 +1525,20 @@ mod tests {
     fn window_icon_has_the_right_size() {
         let icon = window_icon();
         assert_eq!(icon.rgba.len(), (icon.width * icon.height * 4) as usize);
+    }
+
+    #[test]
+    fn shrinking_averages_blocks() {
+        // 2x2 → 1x1: black, white, black, white averages to mid grey.
+        let rgba = [
+            0, 0, 0, 255, 255, 255, 255, 255, 0, 0, 0, 255, 255, 255, 255, 255,
+        ];
+        assert_eq!(shrink(&rgba, [2, 2], [1, 1]), vec![128, 128, 128, 255]);
+        // Sizes that don't divide evenly still cover every output pixel.
+        assert_eq!(
+            shrink(&[9; 320 * 240 * 4], [320, 240], [85, 64]).len(),
+            85 * 64 * 4
+        );
     }
 
     #[test]
