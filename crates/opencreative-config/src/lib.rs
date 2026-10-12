@@ -486,6 +486,35 @@ pub fn save(path: &Path, config: &Config) -> Result<()> {
 mod tests {
     use super::*;
 
+    /// The example in the README parses.
+    #[test]
+    fn readme_music_example_parses() {
+        let config: Config = toml::from_str(
+            r##"
+rotation = 0
+brightness = 60
+
+[scene]
+type = "music"
+style = "mirror"
+color = "#22d3ee"
+rainbow = false
+bars = 24
+"##,
+        )
+        .unwrap();
+        assert_eq!(
+            config.scene,
+            SceneConfig::Music {
+                style: BarStyleConfig::Mirror,
+                color: Rgb([0x22, 0xd3, 0xee]),
+                rainbow: false,
+                bars: 24,
+            }
+        );
+        assert!(config.scene.to_scene().is_ok());
+    }
+
     fn temp_path(name: &str) -> PathBuf {
         std::env::temp_dir()
             .join(format!("opencreative-test-{}-{name}", std::process::id()))

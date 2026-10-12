@@ -282,6 +282,8 @@ pub struct App {
     pub page: Page,
     /// The page drawn last frame, to spot a page change.
     shown_page: Option<Page>,
+    /// Whether an outdated background service was already restarted once.
+    restarted_service: bool,
     client: Option<ipc::Client>,
     pub link: Link,
     embedded: Option<Daemon>,
@@ -335,13 +337,21 @@ pub struct App {
 
 impl App {
     fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        theme::install(&cc.egui_ctx);
+        let mut prefs = prefs::load();
+        // For screenshots: try a font without saving the choice.
+        if let Ok(name) = std::env::var("OPENCREATIVE_FONT")
+            && let Some(font) = theme::AppFont::ALL.into_iter().find(|f| {
+                f.name().eq_ignore_ascii_case(&name) || format!("{f:?}").eq_ignore_ascii_case(&name)
+            })
+        {
+            prefs.app_font = font;
+        }
+        theme::install(&cc.egui_ctx, prefs.app_font);
         // A page's first frame may need redrawing twice before it's shown
         // (new page, then card heights); it never flashes half laid out.
         cc.egui_ctx
             .options_mut(|o| o.max_passes = std::num::NonZeroUsize::new(3).expect("non-zero"));
         egui_extras::install_image_loaders(&cc.egui_ctx);
-        let mut prefs = prefs::load();
         // For screenshots: show the integration without saving the choice.
         if std::env::var_os("OPENCREATIVE_CLAUDE").is_some() {
             prefs.claude_usage = true;
@@ -375,6 +385,7 @@ impl App {
         Self {
             page,
             shown_page: None,
+            restarted_service: false,
             client: None,
             link: Link::Connecting,
             embedded: None,
@@ -508,6 +519,18 @@ impl App {
                 if self.embedded.is_none() {
                     self.start_embedded();
                 }
+            }
+            // An older service still running after an upgrade: restart it
+            // on the new version rather than make the user do it.
+            Err(ipc::Error::Version { .. })
+                if !self.restarted_service && service::query().active =>
+            {
+                self.restarted_service = true;
+                log::info!("restarting the outdated background service");
+                self.link = match service::restart() {
+                    Ok(()) => Link::WaitingForService(Instant::now() + SERVICE_START_TIMEOUT),
+                    Err(e) => Link::Unavailable(e),
+                };
             }
             Err(e) => self.link = Link::Unavailable(e.to_string()),
         }
@@ -832,8 +855,19 @@ impl App {
         }
     }
 
-    /// Adds a web address (YouTube or a direct video link).
-    pub fn add_url(&mut self, url: String) {
+    /// Adds a web address (YouTube or a direct video link). Fetches yt-dlp
+    /// first if a web page needs it and it isn't there yet.
+    pub fn add_url(&mut self, ctx: &egui::Context, url: String) {
+        if opencreative_render::video::needs_ytdlp(&url)
+            && opencreative_render::video::tool("yt-dlp").is_none()
+            && self.task.is_none()
+        {
+            self.run_task(
+                ctx,
+                "Downloading yt-dlp for YouTube",
+                service::download_ytdlp,
+            );
+        }
         self.switch_media_tab(Some(MediaKind::Youtube));
         let (mut items, secs) = self.playlist();
         self.selected_item = items.len();
