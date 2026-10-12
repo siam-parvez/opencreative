@@ -101,10 +101,10 @@ fn cpu(ui: &mut egui::Ui, s: &Snapshot, samples: &[Snapshot]) {
             ui,
             "cpu-stats",
             &[
-                (ghz(s.cpu_mhz as f32), "Frequency"),
-                (celsius(s.cpu_temp_c), "Temperature"),
-                (watts(s.cpu_power_w), "Power"),
-                (pc_watts(s), "PC power (est.)"),
+                (ghz(s.cpu_mhz as f32), "Frequency", "8.88 GHz"),
+                (celsius(s.cpu_temp_c), "Temperature", "88 °C"),
+                (watts(s.cpu_power_w), "Power", "888 W"),
+                (pc_watts(s), "PC power (est.)", "888 W"),
             ],
         );
     });
@@ -146,10 +146,11 @@ fn gpu(ui: &mut egui::Ui, s: &Snapshot, samples: &[Snapshot], gl_name: Option<&s
                         .filter(|m| *m > 0)
                         .map_or("—".to_owned(), |m| ghz(m as f32)),
                     "Frequency",
+                    "8.88 GHz",
                 ),
-                (celsius(g.temp_c), "Temperature"),
-                (watts(g.power_w), "Power"),
-                (vram, "Video memory"),
+                (celsius(g.temp_c), "Temperature", "88 °C"),
+                (watts(g.power_w), "Power", "888 W"),
+                (vram, "Video memory", "8.8 / 88 GB"),
             ],
         );
     });
@@ -180,11 +181,10 @@ fn memory(ui: &mut egui::Ui, s: &Snapshot) {
     let p = Palette::of(ui.ctx());
     card_title(ui, Icon::Memory, "Memory", None);
     ui.horizontal(|ui| {
-        ui.label(
-            egui::RichText::new(format!("{:.0}", s.mem_used_pct))
-                .font(theme::numeric(30.0))
-                .color(p.text),
-        );
+        // Two digits' room, right-aligned, so "% used" stays put.
+        let font = theme::numeric(30.0);
+        let slots = widgets::Slots::fit(ui, "88", &font);
+        widgets::reading(ui, &format!("{:.0}", s.mem_used_pct), font, p.text, slots);
         ui.label(egui::RichText::new("% used").color(p.muted));
     });
     widgets::usage_bar(ui, s.mem_used_pct / 100.0, 22.0);
@@ -194,9 +194,9 @@ fn memory(ui: &mut egui::Ui, s: &Snapshot) {
         ui,
         "memory-stats",
         &[
-            (bytes(s.mem_used_bytes as f64), "In use"),
-            (bytes(free as f64), "Available"),
-            (bytes(s.mem_total_bytes as f64), "Total"),
+            (bytes(s.mem_used_bytes as f64), "In use", "88.8 GB"),
+            (bytes(free as f64), "Available", "88.8 GB"),
+            (bytes(s.mem_total_bytes as f64), "Total", "88.8 GB"),
         ],
     );
 }
@@ -204,11 +204,13 @@ fn memory(ui: &mut egui::Ui, s: &Snapshot) {
 fn storage(ui: &mut egui::Ui, s: &Snapshot) {
     let p = Palette::of(ui.ctx());
     card_title(ui, Icon::Storage, "Storage", None);
-    ui.horizontal_wrapped(|ui| {
-        rate_chip(ui, Icon::Up, &rate(s.disk_read_bps), "read");
-        ui.add_space(8.0);
-        rate_chip(ui, Icon::Down, &rate(s.disk_write_bps), "write");
-    });
+    rate_rows(
+        ui,
+        [
+            (Icon::Up, "Read", rate(s.disk_read_bps)),
+            (Icon::Down, "Write", rate(s.disk_write_bps)),
+        ],
+    );
     ui.add_space(6.0);
     for disk in s.disks.iter().take(MAX_DISKS) {
         let fraction = if disk.total_bytes == 0 {
@@ -247,11 +249,13 @@ fn storage(ui: &mut egui::Ui, s: &Snapshot) {
 fn network(ui: &mut egui::Ui, s: &Snapshot, samples: &[Snapshot]) {
     let p = Palette::of(ui.ctx());
     card_title(ui, Icon::Network, "Network", None);
-    ui.horizontal_wrapped(|ui| {
-        rate_chip(ui, Icon::Up, &rate(s.net_tx_bps), "up");
-        ui.add_space(8.0);
-        rate_chip(ui, Icon::Down, &rate(s.net_rx_bps), "down");
-    });
+    rate_rows(
+        ui,
+        [
+            (Icon::Up, "Upload", rate(s.net_tx_bps)),
+            (Icon::Down, "Download", rate(s.net_rx_bps)),
+        ],
+    );
     let peak = samples
         .iter()
         .flat_map(|s| [s.net_rx_bps, s.net_tx_bps])
@@ -327,14 +331,16 @@ fn history(app: &mut App, ui: &mut egui::Ui) {
     app.history.chart_with_legend(ui);
 }
 
-/// Accent values over muted labels, two per row.
-fn stat_grid(ui: &mut egui::Ui, id: &str, stats: &[(String, &str)]) {
+/// Accent readings over muted labels, two per row. Each reading has room
+/// for its template (the longest value it shows), with its unit in a fixed
+/// place, so changing values never move anything else.
+fn stat_grid(ui: &mut egui::Ui, id: &str, stats: &[(String, &str, &str)]) {
     egui::Grid::new(id)
         .num_columns(2)
         .spacing(vec2(18.0, 10.0))
         .show(ui, |ui| {
-            for (i, (value, label)) in stats.iter().enumerate() {
-                stat(ui, value, label);
+            for (i, (value, label, template)) in stats.iter().enumerate() {
+                stat(ui, value, label, template);
                 if i % 2 == 1 {
                     ui.end_row();
                 }
@@ -342,17 +348,34 @@ fn stat_grid(ui: &mut egui::Ui, id: &str, stats: &[(String, &str)]) {
         });
 }
 
-/// An arrow icon, a bold rate and a muted word. No space after it: at the
-/// end of a row that would widen the card as the numbers grow.
-fn rate_chip(ui: &mut egui::Ui, icon: Icon, value: &str, what: &str) {
+/// How wide `text` is in `font`.
+fn text_width(ui: &egui::Ui, text: &str, font: egui::FontId) -> f32 {
+    ui.painter()
+        .layout_no_wrap(text.to_owned(), font, Color32::WHITE)
+        .size()
+        .x
+}
+
+/// Two rates, one per row: arrow, word, then the rate with its unit in a
+/// fixed place. Rows never wrap, whatever the numbers.
+fn rate_rows(ui: &mut egui::Ui, rows: [(Icon, &str, String); 2]) {
     let p = Palette::of(ui.ctx());
-    icons::show(ui, icon, 16.0, p.faint);
-    ui.label(
-        egui::RichText::new(value)
-            .font(theme::medium(15.0))
-            .color(p.text),
-    );
-    ui.label(egui::RichText::new(what).color(p.muted));
+    let font = theme::medium(15.0);
+    let word_w = rows
+        .iter()
+        .map(|(_, word, _)| text_width(ui, word, theme::regular(14.0)))
+        .fold(0.0, f32::max);
+    let slots = widgets::Slots::fit(ui, "888.8 KB/s", &font);
+    for (icon, word, value) in rows {
+        ui.horizontal(|ui| {
+            icons::show(ui, icon, 16.0, p.faint);
+            ui.scope(|ui| {
+                ui.set_width(word_w);
+                ui.label(egui::RichText::new(word).color(p.muted));
+            });
+            widgets::reading(ui, &value, font.clone(), p.text, slots);
+        });
+    }
 }
 
 fn series(samples: &[Snapshot], f: impl Fn(&Snapshot) -> Option<f32>) -> Vec<Option<f32>> {

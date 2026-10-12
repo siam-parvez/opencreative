@@ -5,6 +5,7 @@
 //! running.
 
 mod tray;
+mod tray_icon;
 
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Sender};
