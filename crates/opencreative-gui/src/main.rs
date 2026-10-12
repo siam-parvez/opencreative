@@ -7,6 +7,7 @@
 // No console window alongside the app on Windows (debug builds keep it for logs).
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod feedback;
 mod icons;
 mod library;
 mod pages;

@@ -1,39 +1,60 @@
-name: Support a new device
-description: Help add a DeepCool cooler or screen that OpenCreative doesn't support yet.
+name: Request support for my cooler
+description: Ask for a DeepCool cooler or screen that OpenCreative doesn't support yet.
 title: "Device: "
 labels: ["new device"]
 body:
   - type: markdown
     attributes:
       value: |
-        Thanks! See [Adding a device](https://github.com/siam-parvez/opencreative/blob/main/docs/adding-a-device.md) for how to collect this.
+        Thanks for helping OpenCreative support more coolers! Fill in what you can.
+        If you came here from the app (**Devices → Request support for your cooler**),
+        the technical details are already filled in below.
   - type: input
     id: model
     attributes:
-      label: Exact model
-      description: From the box, e.g. "LQ360 White".
+      label: Which cooler do you have?
+      description: The model name from the box or DeepCool's website.
+      placeholder: e.g. LQ360 White, AK620 Digital, Mystique 360
+    validations:
+      required: true
+  - type: dropdown
+    id: screen
+    attributes:
+      label: What does its display look like?
+      options:
+        - A picture screen (it can show images or video)
+        - A number display (digits like a temperature, no pictures)
+        - Not sure
     validations:
       required: true
   - type: textarea
-    id: lsusb
+    id: usb
     attributes:
-      label: "`lsusb` line and `sudo lsusb -v -d 3633:`"
+      label: Technical details
+      description: |
+        Filled in by the app. Otherwise, run `lsusb` in a terminal and paste the line
+        that mentions DeepCool or `3633`.
       render: text
     validations:
       required: true
-  - type: textarea
-    id: tried
+  - type: dropdown
+    id: windows
     attributes:
-      label: What OpenCreative does
-      description: Output of `opencreative list`, and what the screen does with `opencreative --no-daemon solid ff0000`.
-      render: text
-  - type: textarea
-    id: capture
-    attributes:
-      label: DeepCreative USB capture
-      description: Attach the .pcapng and list the steps you took with their times.
+      label: Do you also have Windows with DeepCool's DeepCreative app?
+      description: A recording of DeepCreative talking to the cooler is what lets us add it.
+      options:
+        - Yes, and I can make a USB recording
+        - Yes, but I'd need help making a recording
+        - No
+    validations:
+      required: true
   - type: textarea
     id: photos
     attributes:
-      label: Photos
-      description: The device, and its screen running DeepCreative if you can.
+      label: Photos (optional)
+      description: The cooler, and its screen showing something. Drag images here.
+  - type: markdown
+    attributes:
+      value: |
+        If you can make a recording, [Adding a device](https://github.com/siam-parvez/opencreative/blob/main/docs/adding-a-device.md)
+        explains how, step by step. We'll reply here with what we need next.
