@@ -68,6 +68,9 @@ pub struct Config {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub brightness: Option<u8>,
     pub scene: SceneConfig,
+    /// Leave out the top-bar (tray) icon the background service shows.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub hide_tray: bool,
 }
 
 impl Config {
@@ -533,6 +536,7 @@ bars = 24
             scene: SceneConfig::Solid {
                 color: Rgb([0xff, 0x88, 0x00]),
             },
+            hide_tray: true,
         };
         save(&path, &config).unwrap();
         assert!(fs::read_to_string(&path).unwrap().contains("\"#ff8800\""));

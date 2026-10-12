@@ -69,6 +69,24 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 }
             },
         );
+        // The icon belongs to the background service.
+        if matches!(app.link, crate::Link::External) {
+            ui.add_space(12.0);
+            setting_row(
+                ui,
+                "Show in the top bar",
+                "An OpenCreative icon next to the clock, to open this window or switch \
+                 the screen off, Zen mode and brightness without it.",
+                |ui| {
+                    let mut on = !app.applied.hide_tray;
+                    if toggle(ui, &mut on).changed()
+                        && app.send(opencreative_ipc::Request::SetTray { on })
+                    {
+                        app.applied.hide_tray = !on;
+                    }
+                },
+            );
+        }
     });
 
     group(ui, "USB access", |ui| {
