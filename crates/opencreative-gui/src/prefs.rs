@@ -53,6 +53,8 @@ pub struct Prefs {
     pub model: Model,
     pub finish: Finish,
     pub appearance: Appearance,
+    /// The app's typeface.
+    pub app_font: crate::theme::AppFont,
     /// Show Claude plan usage (off unless the user turns it on).
     pub claude_usage: bool,
     /// Whether first-launch setup (starting with the computer) has run.
@@ -92,6 +94,7 @@ mod tests {
             model: Model::Lm360,
             finish: Finish::White,
             appearance: Appearance::Dark,
+            app_font: crate::theme::AppFont::Geist,
             claude_usage: true,
             first_run_done: true,
             playlists: Default::default(),

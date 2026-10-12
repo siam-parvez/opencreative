@@ -16,6 +16,27 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     let ctx = ui.ctx().clone();
     let p = Palette::of(&ctx);
 
+    group(ui, "Appearance", |ui| {
+        setting_row(ui, "Theme", "Light, dark, or follow the desktop.", |ui| {
+            let mut appearance = app.prefs.appearance;
+            if segmented(
+                ui,
+                &mut appearance,
+                &[
+                    (Appearance::System, "System"),
+                    (Appearance::Light, "Light"),
+                    (Appearance::Dark, "Dark"),
+                ],
+            ) {
+                app.prefs.appearance = appearance;
+                ctx.set_theme(appearance.preference());
+                app.save_prefs();
+            }
+        });
+        ui.add_space(12.0);
+        font_picker(app, ui);
+    });
+
     group(ui, "Startup", |ui| {
         if !SERVICE_SUPPORTED {
             ui.label(
@@ -48,6 +69,24 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 }
             },
         );
+        // The icon belongs to the background service.
+        if matches!(app.link, crate::Link::External) {
+            ui.add_space(12.0);
+            setting_row(
+                ui,
+                "Show in the top bar",
+                "An OpenCreative icon next to the clock, to open this window or switch \
+                 the screen off, Zen mode and brightness without it.",
+                |ui| {
+                    let mut on = !app.applied.hide_tray;
+                    if toggle(ui, &mut on).changed()
+                        && app.send(opencreative_ipc::Request::SetTray { on })
+                    {
+                        app.applied.hide_tray = !on;
+                    }
+                },
+            );
+        }
     });
 
     group(ui, "USB access", |ui| {
@@ -190,25 +229,6 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         );
     });
 
-    group(ui, "Appearance", |ui| {
-        setting_row(ui, "Theme", "Light, dark, or follow the desktop.", |ui| {
-            let mut appearance = app.prefs.appearance;
-            if segmented(
-                ui,
-                &mut appearance,
-                &[
-                    (Appearance::System, "System"),
-                    (Appearance::Light, "Light"),
-                    (Appearance::Dark, "Dark"),
-                ],
-            ) {
-                app.prefs.appearance = appearance;
-                ctx.set_theme(appearance.preference());
-                app.save_prefs();
-            }
-        });
-    });
-
     if SERVICE_SUPPORTED {
         group(ui, "Uninstall", |ui| {
             let description = if service::packaged() {
@@ -277,4 +297,75 @@ fn group(ui: &mut egui::Ui, title: &str, add: impl FnOnce(&mut egui::Ui)) {
         add(ui);
     });
     ui.add_space(12.0);
+}
+
+/// The app font: a card per choice, each showing itself.
+fn font_picker(app: &mut App, ui: &mut egui::Ui) {
+    let p = Palette::of(ui.ctx());
+    ui.label(
+        egui::RichText::new("App font")
+            .font(theme::medium(15.0))
+            .color(p.text),
+    );
+    ui.label(
+        egui::RichText::new("The typeface of this window. The cooler screen keeps its own.")
+            .color(p.muted),
+    );
+    ui.add_space(8.0);
+    let mut picked = None;
+    ui.horizontal_wrapped(|ui| {
+        for font in theme::AppFont::ALL {
+            let selected = app.prefs.app_font == font;
+            let response = ui
+                .scope_builder(
+                    egui::UiBuilder::new()
+                        .id_salt(("app-font", font.name()))
+                        .sense(egui::Sense::click()),
+                    |ui| {
+                        egui::Frame::new()
+                            .fill(if selected {
+                                p.raised
+                            } else {
+                                egui::Color32::TRANSPARENT
+                            })
+                            .stroke(egui::Stroke::new(
+                                if selected { 2.0 } else { 1.0 },
+                                if selected { p.accent } else { p.border },
+                            ))
+                            .corner_radius(theme::SMALL_RADIUS)
+                            .inner_margin(egui::Margin::symmetric(14, 10))
+                            .show(ui, |ui| {
+                                ui.set_width(118.0);
+                                ui.set_height(56.0);
+                                ui.vertical(|ui| {
+                                    ui.spacing_mut().item_spacing.y = 2.0;
+                                    ui.label(
+                                        egui::RichText::new("Aa")
+                                            .font(font.sample(26.0))
+                                            .color(if selected { p.accent } else { p.text }),
+                                    );
+                                    ui.add(
+                                        egui::Label::new(
+                                            egui::RichText::new(font.name())
+                                                .font(font.sample(13.0))
+                                                .color(p.muted),
+                                        )
+                                        .truncate(),
+                                    );
+                                });
+                            });
+                    },
+                )
+                .response
+                .on_hover_cursor(egui::CursorIcon::PointingHand);
+            if response.clicked() && !selected {
+                picked = Some(font);
+            }
+        }
+    });
+    if let Some(font) = picked {
+        app.prefs.app_font = font;
+        theme::set_app_font(ui.ctx(), font);
+        app.save_prefs();
+    }
 }

@@ -67,6 +67,13 @@ pub fn enable() -> Result<()> {
     systemctl(&["enable", "--now", UNIT_NAME])
 }
 
+/// Restarts the service if it's running (e.g. an older version after an
+/// upgrade), without waiting for it.
+pub fn restart() -> Result<()> {
+    systemctl(&["daemon-reload"])?;
+    systemctl(&["try-restart", "--no-block", UNIT_NAME])
+}
+
 pub fn disable() -> Result<()> {
     systemctl(&["disable", "--now", UNIT_NAME])
 }

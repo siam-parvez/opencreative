@@ -32,7 +32,7 @@ mod unsupported;
 pub use unsupported::{Client, Server, Stopper};
 
 /// Bumped on any incompatible change to [`Request`] or [`Response`].
-pub const PROTOCOL_VERSION: u32 = 6;
+pub const PROTOCOL_VERSION: u32 = 7;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "cmd", rename_all = "snake_case")]
@@ -60,6 +60,10 @@ pub enum Request {
     /// any), so previews show exactly what the cooler shows.
     Frame {
         after: u64,
+    },
+    /// Shows or hides the background service's top-bar icon.
+    SetTray {
+        on: bool,
     },
 }
 
