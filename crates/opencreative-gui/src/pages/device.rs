@@ -11,7 +11,7 @@ use opencreative_render::panels::Layout;
 use crate::icons::{self, Icon};
 use crate::library::MediaKind;
 use crate::theme::{self, Palette};
-use crate::widgets::{Swatch, section, segmented, swatches, toggle};
+use crate::widgets::{Swatch, card_look, preview_tiles, section, segmented, swatches, toggle};
 use crate::{App, Page, is_digital, is_music};
 
 const CONTROLS_WIDTH: f32 = 300.0;
@@ -185,19 +185,17 @@ fn mode_cards(ui: &mut egui::Ui, current: Mode) -> Option<Mode> {
                         .id_salt(("mode", mode.name()))
                         .sense(Sense::click()),
                     |ui| {
-                        let hovered = ui.response().hovered();
+                        let (fill, stroke) = card_look(
+                            ui,
+                            ui.id(),
+                            selected,
+                            ui.response().hovered(),
+                            p.accent_soft,
+                            p.card,
+                        );
                         egui::Frame::new()
-                            .fill(if selected {
-                                p.accent_soft
-                            } else if hovered {
-                                p.raised
-                            } else {
-                                p.card
-                            })
-                            .stroke(Stroke::new(
-                                if selected { 1.5 } else { 1.0 },
-                                if selected { p.accent } else { p.border },
-                            ))
+                            .fill(fill)
+                            .stroke(Stroke::new(if selected { 1.5 } else { 1.0 }, stroke.color))
                             .corner_radius(theme::RADIUS)
                             .inner_margin(egui::Margin::symmetric(16, 14))
                             .show(ui, |ui| {
@@ -293,14 +291,45 @@ fn display_controls(app: &mut App, ui: &mut egui::Ui, mode: Mode) {
     // Pictures and videos keep their own colors.
     if mode != Mode::Multimedia {
         ui.label(egui::RichText::new("Screen colors").color(p.text));
+        ui.add_space(4.0);
         let mut theme = app.applied.screen_theme;
-        if segmented(
+        let tile = egui::vec2(
+            ((ui.available_width() - 10.0) / 2.0).clamp(96.0, 140.0),
+            96.0,
+        );
+        if preview_tiles(
             ui,
             &mut theme,
             &[
                 (opencreative_config::ScreenTheme::Dark, "Dark"),
                 (opencreative_config::ScreenTheme::Light, "Light"),
             ],
+            tile,
+            |painter, rect, option| {
+                let (bg, fg) = match option {
+                    opencreative_config::ScreenTheme::Dark => {
+                        (egui::Color32::BLACK, egui::Color32::WHITE)
+                    }
+                    opencreative_config::ScreenTheme::Light => {
+                        (egui::Color32::WHITE, egui::Color32::BLACK)
+                    }
+                };
+                let p = Palette::of(painter.ctx());
+                painter.rect(
+                    rect,
+                    theme::SMALL_RADIUS,
+                    bg,
+                    egui::Stroke::new(1.0, p.border),
+                    egui::StrokeKind::Inside,
+                );
+                painter.text(
+                    rect.center(),
+                    egui::Align2::CENTER_CENTER,
+                    "41°",
+                    theme::numeric(22.0),
+                    fg,
+                );
+            },
         ) {
             app.set_screen_theme(theme);
         }
@@ -613,32 +642,43 @@ fn skin_gallery(
     ui.horizontal_wrapped(|ui| {
         for (look, texture) in Look::ALL.into_iter().zip(&app.skin_thumbs.textures) {
             let selected = look == current;
-            let stroke = if selected {
-                Stroke::new(2.0, p.accent)
-            } else {
-                Stroke::new(1.0, p.border)
-            };
-            let response = egui::Frame::new()
-                .stroke(stroke)
-                .corner_radius(theme::RADIUS)
-                .inner_margin(8)
-                .show(ui, |ui| {
-                    // Keep each card as narrow as its thumbnail.
-                    ui.set_max_width(size.x);
-                    ui.vertical_centered(|ui| {
-                        ui.add(
-                            egui::Image::new((texture.id(), size))
-                                .corner_radius(theme::SMALL_RADIUS),
+            let response = ui
+                .scope_builder(
+                    egui::UiBuilder::new()
+                        .id_salt(("skin", look.name()))
+                        .sense(Sense::click()),
+                    |ui| {
+                        let (fill, stroke) = card_look(
+                            ui,
+                            ui.id(),
+                            selected,
+                            ui.response().hovered(),
+                            Color32::TRANSPARENT,
+                            Color32::TRANSPARENT,
                         );
-                        ui.label(egui::RichText::new(look.name()).color(if selected {
-                            p.accent
-                        } else {
-                            p.text
-                        }));
-                    });
-                })
+                        egui::Frame::new()
+                            .fill(fill)
+                            .stroke(stroke)
+                            .corner_radius(theme::RADIUS)
+                            .inner_margin(8)
+                            .show(ui, |ui| {
+                                // Keep each card as narrow as its thumbnail.
+                                ui.set_max_width(size.x);
+                                ui.vertical_centered(|ui| {
+                                    ui.add(
+                                        egui::Image::new((texture.id(), size))
+                                            .corner_radius(theme::SMALL_RADIUS),
+                                    );
+                                    ui.label(egui::RichText::new(look.name()).color(if selected {
+                                        p.accent
+                                    } else {
+                                        p.text
+                                    }));
+                                });
+                            });
+                    },
+                )
                 .response
-                .interact(Sense::click())
                 .on_hover_cursor(egui::CursorIcon::PointingHand);
             if response.clicked() && !selected {
                 picked = Some(look);
@@ -1285,7 +1325,8 @@ fn icon_button(ui: &mut egui::Ui, icon: Icon, tooltip: &str) -> egui::Response {
         ui.painter()
             .rect_filled(rect, theme::SMALL_RADIUS as f32, p.raised);
     }
-    icons::paint(ui, rect.shrink(7.0), icon, p.muted);
+    let tint = if response.hovered() { p.text } else { p.muted };
+    icons::paint(ui, rect.shrink(7.0), icon, tint);
     response
         .on_hover_text(tooltip)
         .on_hover_cursor(egui::CursorIcon::PointingHand)

@@ -34,6 +34,13 @@ pub fn segmented<T: PartialEq + Copy>(
     options: &[(T, &str)],
 ) -> bool {
     let p = Palette::of(ui.ctx());
+    let font = theme::medium(14.0);
+    // Equal segments, sized for the longest label.
+    let widest = options
+        .iter()
+        .map(|(_, label)| text_width(ui, label, &font))
+        .fold(0.0, f32::max);
+    let segment = vec2((widest + 28.0).max(56.0), 30.0);
     let mut changed = false;
     egui::Frame::new()
         .fill(p.control)
@@ -51,17 +58,34 @@ pub fn segmented<T: PartialEq + Copy>(
                 }
                 for (option, label) in ordered {
                     let selected = *value == *option;
-                    let text =
-                        egui::RichText::new(*label).color(if selected { p.text } else { p.muted });
-                    let button = egui::Button::new(text)
-                        .fill(if selected {
-                            p.raised
-                        } else {
-                            Color32::TRANSPARENT
-                        })
-                        .stroke(Stroke::NONE)
-                        .corner_radius(theme::SMALL_RADIUS);
-                    if ui.add(button).clicked() && !selected {
+                    let (rect, response) = ui.allocate_exact_size(segment, Sense::click());
+                    let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+                    let painter = ui.painter();
+                    if selected {
+                        painter.rect(
+                            rect,
+                            theme::SMALL_RADIUS,
+                            p.accent_soft,
+                            Stroke::new(1.0, p.accent.gamma_multiply(0.6)),
+                            egui::StrokeKind::Inside,
+                        );
+                    } else if response.hovered() {
+                        painter.rect_filled(rect, theme::SMALL_RADIUS, p.raised);
+                    }
+                    let color = if selected {
+                        p.accent
+                    } else if response.hovered() {
+                        p.text
+                    } else {
+                        p.muted
+                    };
+                    let font = if selected {
+                        theme::semibold(14.0)
+                    } else {
+                        font.clone()
+                    };
+                    painter.text(rect.center(), Align2::CENTER_CENTER, *label, font, color);
+                    if response.clicked() && !selected {
                         *value = *option;
                         changed = true;
                     }
@@ -69,6 +93,137 @@ pub fn segmented<T: PartialEq + Copy>(
             });
         });
     changed
+}
+
+/// Fill and border of a selectable card or tile. Unselected cards ease
+/// toward a raised fill and a brighter border while the pointer is over
+/// them, so every picker answers the mouse the same way.
+pub fn card_look(
+    ui: &egui::Ui,
+    id: egui::Id,
+    selected: bool,
+    hovered: bool,
+    selected_fill: Color32,
+    idle_fill: Color32,
+) -> (Color32, Stroke) {
+    let p = Palette::of(ui.ctx());
+    let t = ui
+        .ctx()
+        .animate_bool_responsive(id.with("hover"), hovered && !selected);
+    if selected {
+        (selected_fill, Stroke::new(2.0, p.accent))
+    } else {
+        (
+            lerp_color(idle_fill, p.raised, t),
+            Stroke::new(1.0, lerp_color(p.border, p.faint, t)),
+        )
+    }
+}
+
+/// A row of picture tiles, one per option, like the font and skin pickers.
+/// `paint` draws an option's preview into the top of its tile. Returns true
+/// if the choice changed.
+pub fn preview_tiles<T: PartialEq + Copy>(
+    ui: &mut egui::Ui,
+    value: &mut T,
+    options: &[(T, &str)],
+    size: egui::Vec2,
+    paint: impl Fn(&egui::Painter, Rect, T),
+) -> bool {
+    let p = Palette::of(ui.ctx());
+    let mut changed = false;
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing.x = 10.0;
+        for &(option, label) in options {
+            let selected = *value == option;
+            let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+            let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+            let (fill, border) = card_look(
+                ui,
+                response.id,
+                selected,
+                response.hovered(),
+                p.raised,
+                p.card,
+            );
+            let painter = ui.painter();
+            painter.rect(
+                rect,
+                theme::SMALL_RADIUS,
+                fill,
+                border,
+                egui::StrokeKind::Inside,
+            );
+            let label_h = 28.0;
+            let preview = Rect::from_min_max(
+                rect.min + vec2(9.0, 9.0),
+                pos2(rect.max.x - 9.0, rect.max.y - label_h),
+            );
+            paint(painter, preview, option);
+            let font = if selected {
+                theme::semibold(13.0)
+            } else {
+                theme::medium(13.0)
+            };
+            painter.text(
+                pos2(rect.center().x, rect.max.y - label_h / 2.0),
+                Align2::CENTER_CENTER,
+                label,
+                font,
+                if selected { p.accent } else { p.text },
+            );
+            if response.clicked() && !selected {
+                *value = option;
+                changed = true;
+            }
+        }
+    });
+    changed
+}
+
+/// A miniature app window in `p`'s colors: sidebar and two cards.
+pub fn paint_mini_window(painter: &egui::Painter, rect: Rect, p: &Palette) {
+    let r = theme::SMALL_RADIUS;
+    let edge = Stroke::new(1.0, p.border);
+    painter.rect(rect, r, p.bg, edge, egui::StrokeKind::Inside);
+    let sidebar = Rect::from_min_size(rect.min, vec2(rect.width() * 0.28, rect.height()));
+    let sidebar_corners = CornerRadius {
+        nw: r,
+        sw: r,
+        ne: 0,
+        se: 0,
+    };
+    painter.rect(
+        sidebar,
+        sidebar_corners,
+        p.sidebar,
+        edge,
+        egui::StrokeKind::Inside,
+    );
+    // Navigation lines, the first one selected.
+    for i in 0..3 {
+        let line = Rect::from_min_size(
+            pos2(sidebar.left() + 5.0, sidebar.top() + 8.0 + i as f32 * 7.0),
+            vec2(sidebar.width() - 12.0, 3.0),
+        );
+        painter.rect_filled(line, 1.5, if i == 0 { p.accent } else { p.faint });
+    }
+    let content = Rect::from_min_max(
+        pos2(sidebar.right() + 6.0, rect.top() + 6.0),
+        rect.max - vec2(6.0, 6.0),
+    );
+    let card_h = (content.height() - 5.0) / 2.0;
+    for i in 0..2 {
+        let card = Rect::from_min_size(
+            pos2(content.left(), content.top() + i as f32 * (card_h + 5.0)),
+            vec2(content.width(), card_h),
+        );
+        painter.rect(card, r, p.card, edge, egui::StrokeKind::Inside);
+        let title = Rect::from_min_size(card.min + vec2(5.0, 5.0), vec2(card.width() * 0.5, 3.0));
+        painter.rect_filled(title, 1.5, p.text.gamma_multiply(0.7));
+        let body = Rect::from_min_size(card.min + vec2(5.0, 11.0), vec2(card.width() * 0.7, 3.0));
+        painter.rect_filled(body, 1.5, p.muted.gamma_multiply(0.6));
+    }
 }
 
 /// A small rounded status label, e.g. "Connected".
@@ -426,9 +581,12 @@ pub fn swatches(
     let p = Palette::of(ui.ctx());
     let mut picked = None;
     let size = vec2(26.0, 26.0);
-    let ring = |ui: &egui::Ui, rect: Rect, selected: bool| {
-        let color = if selected { p.accent } else { p.border };
-        let width = if selected { 2.0 } else { 1.0 };
+    let ring = |ui: &egui::Ui, rect: Rect, selected: bool, hovered: bool| {
+        let (width, color) = match (selected, hovered) {
+            (true, _) => (2.0, p.accent),
+            (false, true) => (1.5, p.muted),
+            (false, false) => (1.0, p.border),
+        };
         ui.painter()
             .circle_stroke(rect.center(), 12.0, Stroke::new(width, color));
     };
@@ -437,7 +595,7 @@ pub fn swatches(
         if rainbow {
             let (rect, response) = ui.allocate_exact_size(size, Sense::click());
             paint_rainbow(ui, rect.center(), 10.0);
-            ring(ui, rect, current == Swatch::Rainbow);
+            ring(ui, rect, current == Swatch::Rainbow, response.hovered());
             if response
                 .on_hover_text("Rainbow: each bar by its pitch")
                 .on_hover_cursor(egui::CursorIcon::PointingHand)
@@ -450,7 +608,7 @@ pub fn swatches(
             let (rect, response) = ui.allocate_exact_size(size, Sense::click());
             let fill = Color32::from_rgb(rgb[0], rgb[1], rgb[2]);
             ui.painter().circle_filled(rect.center(), 10.0, fill);
-            ring(ui, rect, current == Swatch::Color(rgb));
+            ring(ui, rect, current == Swatch::Color(rgb), response.hovered());
             if response
                 .on_hover_cursor(egui::CursorIcon::PointingHand)
                 .clicked()
@@ -488,7 +646,7 @@ pub fn swatches(
             [c - vec2(0.0, 4.0), c + vec2(0.0, 4.0)],
             Stroke::new(1.5, plus),
         );
-        ring(ui, rect, is_custom);
+        ring(ui, rect, is_custom, response.hovered());
         let response = response
             .on_hover_text("Custom color")
             .on_hover_cursor(egui::CursorIcon::PointingHand);
