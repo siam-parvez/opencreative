@@ -8,6 +8,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod icons;
+mod library;
 mod pages;
 mod prefs;
 mod sensors;
@@ -15,6 +16,7 @@ mod service;
 mod theme;
 mod widgets;
 
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
@@ -30,6 +32,7 @@ use opencreative_protocol::pixel;
 use opencreative_render::Rotation;
 
 use crate::icons::Icon;
+use crate::library::MediaKind;
 use crate::prefs::Appearance;
 use crate::sensors::SensorHistory;
 use crate::theme::Palette;
@@ -42,7 +45,6 @@ const CONNECT_POLL: Duration = Duration::from_millis(250);
 const SERVICE_START_TIMEOUT: Duration = Duration::from_secs(10);
 const DEVICE_SCAN: Duration = Duration::from_secs(3);
 const TOAST_FOR: Duration = Duration::from_secs(4);
-const IMAGE_EXTENSIONS: [&str; 6] = ["png", "jpg", "jpeg", "gif", "webp", "bmp"];
 /// How long each playlist item shows when there are several, by default.
 pub const DEFAULT_ITEM_SECS: f64 = 10.0;
 const SIDEBAR_WIDTH: f32 = 212.0;
@@ -105,7 +107,7 @@ fn icon_rgba(size: u32) -> Vec<u8> {
 
 pub const SERVICE_SUPPORTED: bool = cfg!(target_os = "linux");
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Page {
     Dashboard,
     Devices,
@@ -193,6 +195,8 @@ pub const UNINSTALLING: &str = "Uninstalling OpenCreative";
 
 pub struct App {
     pub page: Page,
+    /// The page drawn last frame, to spot a page change.
+    shown_page: Option<Page>,
     client: Option<ipc::Client>,
     pub link: Link,
     embedded: Option<Daemon>,
@@ -210,8 +214,14 @@ pub struct App {
     /// A media scene being edited (dragging to pan, zoom slider): the
     /// preview shows it, and it's sent to the cooler when the edit ends.
     pub draft_scene: Option<SceneConfig>,
+    /// The Multimedia page's source tab: a kind of media, or `None` for a
+    /// plain color.
+    pub media_tab: Option<MediaKind>,
     /// The playlist item the crop controls and preview dragging apply to.
     pub selected_item: usize,
+    /// Items picked for removal together (Ctrl/Shift-click); includes
+    /// `selected_item` when anything is picked.
+    pub selection: BTreeSet<usize>,
     /// When the draft last changed; it's sent once edits pause.
     draft_touched: Instant,
     /// The web address being typed on the Multimedia page.
@@ -274,6 +284,7 @@ impl App {
         let applied = Config::default();
         Self {
             page,
+            shown_page: None,
             client: None,
             link: Link::Connecting,
             embedded: None,
@@ -286,7 +297,9 @@ impl App {
             digital_scene: SceneConfig::default(),
             media_scene: default_media_scene(),
             draft_scene: None,
+            media_tab: None,
             selected_item: 0,
+            selection: BTreeSet::new(),
             draft_touched: Instant::now(),
             url_input: String::new(),
             applied,
@@ -361,8 +374,9 @@ impl App {
                 }
                 if is_digital(&status.config.scene) {
                     self.digital_scene = status.config.scene.clone();
-                } else {
+                } else if !self.synced || status.config.scene != self.media_scene {
                     self.media_scene = status.config.scene.clone();
+                    self.follow_media_scene();
                 }
                 self.synced = true;
                 self.device = status.device;
@@ -560,18 +574,14 @@ impl App {
         self.task = Some(rx);
     }
 
-    /// Opens a file picker for images, GIFs and videos (several at once).
-    pub fn browse_for_media(&mut self, ctx: &egui::Context) {
+    /// Opens a file picker for one kind of media (several files at once).
+    pub fn browse_for_media(&mut self, ctx: &egui::Context, kind: MediaKind) {
         let (tx, rx) = mpsc::channel();
         let ctx = ctx.clone();
         thread::spawn(move || {
-            let mut all: Vec<&str> = IMAGE_EXTENSIONS.to_vec();
-            all.extend(opencreative_render::media::VIDEO_EXTENSIONS);
             let dialog = rfd::AsyncFileDialog::new()
-                .set_title("Add images, GIFs or videos")
-                .add_filter("Images and videos", &all)
-                .add_filter("Images and GIFs", &IMAGE_EXTENSIONS)
-                .add_filter("Videos", &opencreative_render::media::VIDEO_EXTENSIONS);
+                .set_title(format!("Add {}", kind.noun(2)))
+                .add_filter(kind.name(), kind.extensions());
             let picked = pollster::block_on(dialog.pick_files())
                 .map(|files| files.iter().map(|f| f.path().to_owned()).collect())
                 .unwrap_or_default();
@@ -581,11 +591,10 @@ impl App {
         self.picking_file = Some(rx);
     }
 
-    /// The media playlist the cooler shows (or would show) in Multimedia
-    /// mode, and the seconds per item.
-    pub fn playlist(&self) -> (Vec<MediaItem>, f64) {
-        let scene = self.draft_scene.as_ref().unwrap_or(&self.media_scene);
-        match scene {
+    /// Picks the source tab for a media scene set elsewhere (on startup, or
+    /// by the CLI), filing its items into the matching playlists.
+    fn follow_media_scene(&mut self) {
+        let (items, secs) = match &self.media_scene {
             SceneConfig::Media { items, item_secs } => (items.clone(), *item_secs),
             SceneConfig::Image { path, fit } => (
                 vec![MediaItem {
@@ -594,17 +603,70 @@ impl App {
                 }],
                 DEFAULT_ITEM_SECS,
             ),
-            _ => (Vec::new(), DEFAULT_ITEM_SECS),
+            _ => {
+                self.switch_media_tab(None);
+                return;
+            }
+        };
+        let before = self.prefs.playlists.clone();
+        let kind = self.prefs.playlists.absorb(&items, secs);
+        if self.prefs.playlists != before {
+            self.save_prefs();
+        }
+        if kind.is_some() {
+            self.switch_media_tab(kind);
         }
     }
 
-    /// Shows a playlist on the cooler (or, with `draft`, only in the
-    /// preview until the edit ends).
+    /// Changes the Multimedia source tab, clearing the row selection.
+    pub fn switch_media_tab(&mut self, tab: Option<MediaKind>) {
+        if self.media_tab != tab {
+            self.media_tab = tab;
+            self.selected_item = 0;
+            self.selection.clear();
+            self.draft_scene = None;
+        }
+    }
+
+    /// The current tab's playlist (with any edit in progress) and the
+    /// seconds per item.
+    pub fn playlist(&self) -> (Vec<MediaItem>, f64) {
+        if let Some(SceneConfig::Media { items, item_secs }) = &self.draft_scene {
+            return (items.clone(), *item_secs);
+        }
+        match self.media_tab {
+            Some(kind) => {
+                let list = self.prefs.playlists.get(kind);
+                (list.items.clone(), list.item_secs)
+            }
+            None => (Vec::new(), DEFAULT_ITEM_SECS),
+        }
+    }
+
+    /// Saves the current tab's playlist and shows it on the cooler (or,
+    /// with `draft`, only in the preview until the edit ends). An emptied
+    /// playlist leaves the screen a plain color.
     pub fn set_playlist(&mut self, items: Vec<MediaItem>, item_secs: f64, draft: bool) {
-        let scene = SceneConfig::Media { items, item_secs };
+        let Some(kind) = self.media_tab else {
+            return;
+        };
+        let scene = SceneConfig::Media {
+            items: items.clone(),
+            item_secs,
+        };
         if draft {
             self.draft_scene = Some(scene);
             self.draft_touched = Instant::now();
+            return;
+        }
+        let list = self.prefs.playlists.get_mut(kind);
+        if list.items != items || list.item_secs != item_secs {
+            list.items = items.clone();
+            list.item_secs = item_secs;
+            self.save_prefs();
+        }
+        if items.is_empty() {
+            self.set_scene(default_media_scene());
         } else {
             self.set_scene(scene);
         }
@@ -620,31 +682,62 @@ impl App {
         let pointer_down = ctx.input(|i| i.pointer.any_down());
         let idle = self.draft_touched.elapsed();
         if !pointer_down && idle >= SETTLE {
-            if let Some(scene) = self.draft_scene.take() {
-                self.set_scene(scene);
+            if let Some(SceneConfig::Media { items, item_secs }) = self.draft_scene.take() {
+                self.set_playlist(items, item_secs, false);
             }
         } else {
             ctx.request_repaint_after(SETTLE.saturating_sub(idle));
         }
     }
 
-    /// Adds files to the end of the playlist and shows it.
+    /// Adds files to the playlist of their kind and shows the first one's
+    /// playlist.
     pub fn add_media(&mut self, paths: Vec<PathBuf>) {
-        if paths.is_empty() {
-            return;
+        let mut added: Vec<(MediaKind, usize)> = Vec::new();
+        let mut first: Option<(MediaKind, usize)> = None;
+        for path in paths {
+            // The daemon has its own working directory.
+            let path = match fs::canonicalize(&path) {
+                Ok(path) => path,
+                Err(e) => {
+                    self.fail(format!("{}: {e}", path.display()));
+                    continue;
+                }
+            };
+            let kind = MediaKind::of_path(&path);
+            let list = self.prefs.playlists.get_mut(kind);
+            first.get_or_insert((kind, list.items.len()));
+            list.items.push(MediaItem::file(path));
+            match added.iter_mut().find(|(k, _)| *k == kind) {
+                Some((_, n)) => *n += 1,
+                None => added.push((kind, 1)),
+            }
         }
-        let (mut items, secs) = self.playlist();
-        let first_new = items.len();
-        items.extend(paths.into_iter().map(MediaItem::file));
-        self.selected_item = first_new;
+        let Some((kind, index)) = first else {
+            return;
+        };
+        self.save_prefs();
+        self.switch_media_tab(Some(kind));
+        self.selected_item = index;
+        self.selection.clear();
+        let (items, secs) = self.playlist();
         self.set_playlist(items, secs, false);
         self.page = Page::Device;
+        if added.len() > 1 {
+            let parts: Vec<String> = added
+                .iter()
+                .map(|(k, n)| format!("{n} {} to {}", k.noun(*n), k.name()))
+                .collect();
+            self.notify(format!("Added {}.", parts.join(", ")));
+        }
     }
 
     /// Adds a web address (YouTube or a direct video link).
     pub fn add_url(&mut self, url: String) {
+        self.switch_media_tab(Some(MediaKind::Youtube));
         let (mut items, secs) = self.playlist();
         self.selected_item = items.len();
+        self.selection.clear();
         items.push(MediaItem::web(url));
         self.set_playlist(items, secs, false);
     }
@@ -1227,11 +1320,22 @@ impl eframe::App for App {
                     .stroke(Stroke::new(1.0, p.border)),
             )
             .show(ui, |ui| self.sidebar(ui));
+        // A new page's first frame is laid out before its widgets know their
+        // sizes; redraw it before showing it so nothing jumps.
+        if self.shown_page != Some(self.page) {
+            self.shown_page = Some(self.page);
+            ctx.request_discard("page change");
+        }
         egui::CentralPanel::default()
             .frame(Frame::new().fill(p.bg).inner_margin(Margin::same(28)))
             .show(ui, |ui| {
+                // Each page keeps its own scroll position, and the scrollbar's
+                // gutter is always there, so content is equally wide on short
+                // and long pages.
                 egui::ScrollArea::vertical()
+                    .id_salt(self.page)
                     .auto_shrink([false, false])
+                    .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
                     .show(ui, |ui| match self.page {
                         Page::Dashboard => pages::dashboard::show(self, ui),
                         Page::Devices => pages::devices::show(self, ui),

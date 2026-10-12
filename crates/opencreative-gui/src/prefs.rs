@@ -57,6 +57,8 @@ pub struct Prefs {
     pub claude_usage: bool,
     /// Whether first-launch setup (starting with the computer) has run.
     pub first_run_done: bool,
+    /// The Multimedia page's playlists, one per kind of media.
+    pub playlists: crate::library::Playlists,
 }
 
 fn path() -> Option<PathBuf> {
@@ -92,6 +94,7 @@ mod tests {
             appearance: Appearance::Dark,
             claude_usage: true,
             first_run_done: true,
+            playlists: Default::default(),
         };
         let text = toml::to_string_pretty(&prefs).unwrap();
         assert!(text.contains("appearance = \"dark\""));
