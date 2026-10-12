@@ -24,6 +24,7 @@ pub enum Icon {
     Help,
     Image,
     Film,
+    Music,
     Link,
     Trash,
     Minimize,
@@ -31,6 +32,10 @@ pub enum Icon {
     Restore,
     Close,
     Upload,
+    Rotate,
+    Sun,
+    Moon,
+    Sliders,
     Claude,
 }
 
@@ -59,6 +64,11 @@ impl Icon {
             Icon::Restore => svg!("../../../assets/icons/copy.svg"),
             Icon::Close => svg!("../../../assets/icons/x.svg"),
             Icon::Upload => svg!("../../../assets/icons/upload.svg"),
+            Icon::Music => svg!("../../../assets/icons/music.svg"),
+            Icon::Rotate => svg!("../../../assets/icons/rotate-cw.svg"),
+            Icon::Sun => svg!("../../../assets/icons/sun.svg"),
+            Icon::Moon => svg!("../../../assets/icons/moon.svg"),
+            Icon::Sliders => svg!("../../../assets/icons/sliders-horizontal.svg"),
             Icon::Claude => return None,
         })
     }

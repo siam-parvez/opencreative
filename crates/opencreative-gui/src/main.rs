@@ -306,6 +306,8 @@ pub struct App {
     /// The Multimedia page's source tab: a kind of media, or `None` for a
     /// plain color.
     pub media_tab: Option<MediaKind>,
+    /// The cooler screen page's Customize panel is open.
+    pub customize_open: bool,
     /// The playlist item the crop controls and preview dragging apply to.
     pub selected_item: usize,
     /// Items picked for removal together (Ctrl/Shift-click); includes
@@ -401,6 +403,7 @@ impl App {
             music_scene: SceneConfig::music(),
             draft_scene: None,
             media_tab: None,
+            customize_open: true,
             selected_item: 0,
             selection: BTreeSet::new(),
             draft_touched: Instant::now(),

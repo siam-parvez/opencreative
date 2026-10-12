@@ -100,13 +100,6 @@ fn segment_width<T>(ui: &egui::Ui, options: &[(T, &str)]) -> f32 {
     (widest + 28.0).max(56.0)
 }
 
-/// The full width `segmented` takes for these options, for centering it.
-pub fn segmented_width<T>(ui: &egui::Ui, options: &[(T, &str)]) -> f32 {
-    let n = options.len() as f32;
-    // Segments, the gaps between them, the inner margin and the border.
-    n * segment_width(ui, options) + (n - 1.0) * 2.0 + 2.0 * 3.0 + 2.0
-}
-
 /// Fill and border of a selectable card or tile. Unselected cards ease
 /// toward a raised fill and a brighter border while the pointer is over
 /// them, so every picker answers the mouse the same way.
