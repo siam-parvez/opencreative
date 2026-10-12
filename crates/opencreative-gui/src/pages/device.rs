@@ -11,12 +11,18 @@ use opencreative_render::panels::Layout;
 use crate::icons::{self, Icon};
 use crate::library::MediaKind;
 use crate::theme::{self, Palette};
-use crate::widgets::{Swatch, card_look, preview_tiles, section, segmented, swatches, toggle};
+use crate::widgets::{
+    Swatch, card_look, pill, preview_tiles, section, segmented, swatches, toggle,
+};
 use crate::{App, Page, is_digital, is_music};
 
-const CONTROLS_WIDTH: f32 = 300.0;
-/// Upper bound on how much the 320x240 preview is enlarged.
-const MAX_PREVIEW_ZOOM: f32 = 2.0;
+/// The left column: the preview with the display controls under it. At its
+/// widest it fits 320 points of screen inside a card; narrower windows
+/// shrink it toward the minimum before the columns stack.
+const SIDE_WIDTH: f32 = 384.0;
+const SIDE_MIN_WIDTH: f32 = 300.0;
+/// The mode's settings need at least this much beside the left column.
+const CONTENT_MIN_WIDTH: f32 = 400.0;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Mode {
@@ -120,26 +126,38 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         ui.add_space(12.0);
     }
 
-    ui.horizontal_top(|ui| {
-        ui.vertical(|ui| {
-            ui.set_width(CONTROLS_WIDTH);
-            theme::card(ui, |ui| display_controls(app, ui, mode));
+    // Left: the screen (preview, then its display settings). Right: what it
+    // shows, for the chosen mode. One column when the window is narrow.
+    let side = |app: &mut App, ui: &mut egui::Ui| {
+        theme::card(ui, |ui| {
+            preview(app, ui);
+            ui.add_space(20.0);
+            display_controls(app, ui, mode);
         });
-        ui.add_space(4.0);
-        ui.vertical(|ui| {
-            theme::card(ui, |ui| {
-                preview(app, ui);
-                ui.add_space(14.0);
-                ui.separator();
-                ui.add_space(8.0);
-                match mode {
-                    Mode::Digital => digital(app, ui),
-                    Mode::Multimedia => multimedia(app, ui),
-                    Mode::Music => music(app, ui),
-                }
+    };
+    let content = |app: &mut App, ui: &mut egui::Ui| {
+        theme::card(ui, |ui| match mode {
+            Mode::Digital => digital(app, ui),
+            Mode::Multimedia => multimedia(app, ui),
+            Mode::Music => music(app, ui),
+        });
+    };
+    let available = ui.available_width();
+    let side_width = (available - 18.0 - CONTENT_MIN_WIDTH).min(SIDE_WIDTH);
+    if side_width >= SIDE_MIN_WIDTH {
+        ui.horizontal_top(|ui| {
+            ui.vertical(|ui| {
+                ui.set_width(side_width);
+                side(app, ui);
             });
+            ui.add_space(4.0);
+            ui.vertical(|ui| content(app, ui));
         });
-    });
+    } else {
+        side(app, ui);
+        ui.add_space(14.0);
+        content(app, ui);
+    }
     ui.add_space(56.0);
 }
 
@@ -171,7 +189,7 @@ impl Mode {
     }
 }
 
-/// What the screen shows, as three cards side by side. Returns the mode
+/// What the screen shows, as three slim tabs side by side. Returns the mode
 /// clicked, if it isn't the current one.
 fn mode_cards(ui: &mut egui::Ui, current: Mode) -> Option<Mode> {
     let p = Palette::of(ui.ctx());
@@ -197,34 +215,23 @@ fn mode_cards(ui: &mut egui::Ui, current: Mode) -> Option<Mode> {
                             .fill(fill)
                             .stroke(Stroke::new(if selected { 1.5 } else { 1.0 }, stroke.color))
                             .corner_radius(theme::RADIUS)
-                            .inner_margin(egui::Margin::symmetric(16, 14))
+                            .inner_margin(egui::Margin::symmetric(14, 10))
                             .show(ui, |ui| {
                                 ui.set_width(ui.available_width());
                                 ui.horizontal(|ui| {
                                     let tint = if selected { p.accent } else { p.muted };
-                                    icons::show(ui, mode.icon(), 22.0, tint);
-                                    ui.add_space(4.0);
-                                    ui.vertical(|ui| {
-                                        ui.spacing_mut().item_spacing.y = 2.0;
-                                        ui.label(
-                                            egui::RichText::new(mode.name())
-                                                .font(theme::semibold(15.0))
-                                                .color(p.text),
-                                        );
-                                        ui.add(
-                                            egui::Label::new(
-                                                egui::RichText::new(mode.detail())
-                                                    .small()
-                                                    .color(p.muted),
-                                            )
-                                            .truncate(),
-                                        );
-                                    });
+                                    icons::show(ui, mode.icon(), 18.0, tint);
+                                    ui.label(
+                                        egui::RichText::new(mode.name())
+                                            .font(theme::semibold(15.0))
+                                            .color(if selected { p.text } else { p.muted }),
+                                    );
                                 });
                             });
                     },
                 )
                 .response
+                .on_hover_text(mode.detail())
                 .on_hover_cursor(egui::CursorIcon::PointingHand);
             if response.clicked() && !selected {
                 picked = Some(mode);
@@ -262,9 +269,6 @@ fn notice(app: &mut App, ui: &mut egui::Ui) {
 
 fn display_controls(app: &mut App, ui: &mut egui::Ui, mode: Mode) {
     let p = Palette::of(ui.ctx());
-    section(ui, "Display");
-    ui.add_space(8.0);
-
     labelled_value(ui, "Brightness", &format!("{}%", app.brightness));
     ui.spacing_mut().slider_width = ui.available_width();
     let slider = ui.add(egui::Slider::new(&mut app.brightness, 0..=100).show_value(false));
@@ -294,8 +298,8 @@ fn display_controls(app: &mut App, ui: &mut egui::Ui, mode: Mode) {
         ui.add_space(4.0);
         let mut theme = app.applied.screen_theme;
         let tile = egui::vec2(
-            ((ui.available_width() - 10.0) / 2.0).clamp(96.0, 140.0),
-            96.0,
+            ((ui.available_width() - 10.0) / 2.0).clamp(96.0, 180.0),
+            72.0,
         );
         if preview_tiles(
             ui,
@@ -326,7 +330,7 @@ fn display_controls(app: &mut App, ui: &mut egui::Ui, mode: Mode) {
                     rect.center(),
                     egui::Align2::CENTER_CENTER,
                     "41°",
-                    theme::numeric(22.0),
+                    theme::numeric(16.0),
                     fg,
                 );
             },
@@ -373,29 +377,19 @@ fn labelled_value(ui: &mut egui::Ui, label: &str, value: &str) {
 
 fn preview(app: &mut App, ui: &mut egui::Ui) {
     let p = Palette::of(ui.ctx());
-    ui.horizontal(|ui| {
-        ui.label(
-            egui::RichText::new("Preview")
-                .font(theme::semibold(15.0))
-                .color(p.text),
-        );
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if icon_button(ui, Icon::Rotate, "Rotate 90°").clicked() {
-                let next = (app.applied.rotation + 90) % 360;
-                app.set_rotation(next);
-            }
-        });
-    });
-    ui.add_space(6.0);
-
     let (w, h) = app.preview.size;
     let pad = 10.0;
     // Whole-number zoom in physical pixels keeps every panel pixel sharp.
     let ppp = ui.ctx().pixels_per_point();
     let room = (ui.available_width() - 2.0 * pad) * ppp;
-    let zoom = (room / w.max(1) as f32)
-        .floor()
-        .clamp(1.0, MAX_PREVIEW_ZOOM);
+    // Whole-number zoom, never larger than the panel's real size in points;
+    // a column too narrow for one physical pixel per pixel scales down.
+    let fit = room / w.max(1) as f32;
+    let zoom = if fit >= 1.0 {
+        fit.floor().min(ppp.round().max(1.0))
+    } else {
+        fit
+    };
     let screen = vec2(w as f32, h as f32) * zoom / ppp;
     ui.vertical_centered(|ui| {
         let (bezel, response) =
@@ -523,26 +517,25 @@ fn digital(app: &mut App, ui: &mut egui::Ui) {
                 });
             ui.add_space(12.0);
 
-            section(ui, "Recommended");
-            let presets = PRESETS.into_iter().chain(claude.then_some(CLAUDE_PRESET));
-            for (name, main, others) in presets {
-                let selected = primary == main && secondary == others;
-                let detail = format!(
-                    "{} (main) + {} + {}",
-                    main.name(),
-                    others[0].name(),
-                    others[1].name()
-                );
-                let response = ui.radio(selected, egui::RichText::new(name).color(p.text));
-                ui.indent(name, |ui| {
-                    ui.label(egui::RichText::new(detail).small().color(p.muted));
-                });
-                if response.clicked() && !selected {
-                    primary = main;
-                    secondary = others;
-                    changed = true;
+            ui.label(egui::RichText::new("Quick picks").color(p.muted));
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = vec2(6.0, 6.0);
+                let presets = PRESETS.into_iter().chain(claude.then_some(CLAUDE_PRESET));
+                for (name, main, others) in presets {
+                    let selected = primary == main && secondary == others;
+                    let detail = format!(
+                        "{} (main), {}, {}",
+                        main.name(),
+                        others[0].name(),
+                        others[1].name()
+                    );
+                    if pill(ui, name, selected).on_hover_text(detail).clicked() && !selected {
+                        primary = main;
+                        secondary = others;
+                        changed = true;
+                    }
                 }
-            }
+            });
             if changed {
                 app.set_scene(SceneConfig::Panels {
                     skin,

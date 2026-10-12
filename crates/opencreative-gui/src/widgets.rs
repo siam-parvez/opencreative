@@ -268,6 +268,38 @@ pub fn arrow_link(ui: &mut egui::Ui, label: &str) -> Response {
     response
 }
 
+/// A small rounded choice, for quick picks: outlined, or accent-tinted when
+/// it matches the current setting.
+pub fn pill(ui: &mut egui::Ui, label: &str, selected: bool) -> Response {
+    let p = Palette::of(ui.ctx());
+    let font = theme::medium(13.0);
+    let size = vec2(text_width(ui, label, &font) + 24.0, 28.0);
+    let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+    let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+    let t = ui
+        .ctx()
+        .animate_bool_responsive(response.id.with("hover"), response.hovered());
+    let (fill, stroke, text) = if selected {
+        (p.accent_soft, p.accent.gamma_multiply(0.6), p.accent)
+    } else {
+        (
+            p.raised.gamma_multiply(t),
+            lerp_color(p.border, p.faint, t),
+            lerp_color(p.muted, p.text, t),
+        )
+    };
+    ui.painter().rect(
+        rect,
+        CornerRadius::same(14),
+        fill,
+        Stroke::new(1.0, stroke),
+        egui::StrokeKind::Inside,
+    );
+    ui.painter()
+        .text(rect.center(), Align2::CENTER_CENTER, label, font, text);
+    response
+}
+
 /// A small rounded status label, e.g. "Connected".
 pub fn chip(ui: &mut egui::Ui, text: &str, color: Color32) {
     egui::Frame::new()
@@ -572,14 +604,33 @@ pub fn bytes(n: f64) -> String {
     }
 }
 
+/// Blends two colors, alpha included, so easing from transparent fades in
+/// instead of starting black. Color32 is premultiplied, so every channel
+/// blends linearly.
 fn lerp_color(a: Color32, b: Color32, t: f32) -> Color32 {
     let l = |x: u8, y: u8| (x as f32 + (y as f32 - x as f32) * t).round() as u8;
-    Color32::from_rgb(l(a.r(), b.r()), l(a.g(), b.g()), l(a.b(), b.b()))
+    Color32::from_rgba_premultiplied(
+        l(a.r(), b.r()),
+        l(a.g(), b.g()),
+        l(a.b(), b.b()),
+        l(a.a(), b.a()),
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn blending_from_transparent_stays_transparent() {
+        let raised = Color32::from_rgb(0xee, 0xf0, 0xf3);
+        assert_eq!(
+            lerp_color(Color32::TRANSPARENT, raised, 0.0),
+            Color32::TRANSPARENT
+        );
+        assert_eq!(lerp_color(Color32::TRANSPARENT, raised, 1.0), raised);
+        assert_eq!(lerp_color(Color32::BLACK, Color32::WHITE, 0.5).a(), 255);
+    }
 
     #[test]
     fn units_split_off_numbers() {
