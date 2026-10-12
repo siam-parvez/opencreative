@@ -35,12 +35,7 @@ pub fn segmented<T: PartialEq + Copy>(
 ) -> bool {
     let p = Palette::of(ui.ctx());
     let font = theme::medium(14.0);
-    // Equal segments, sized for the longest label.
-    let widest = options
-        .iter()
-        .map(|(_, label)| text_width(ui, label, &font))
-        .fold(0.0, f32::max);
-    let segment = vec2((widest + 28.0).max(56.0), 30.0);
+    let segment = vec2(segment_width(ui, options), 30.0);
     let mut changed = false;
     egui::Frame::new()
         .fill(p.control)
@@ -93,6 +88,23 @@ pub fn segmented<T: PartialEq + Copy>(
             });
         });
     changed
+}
+
+/// Equal segments, sized for the longest label.
+fn segment_width<T>(ui: &egui::Ui, options: &[(T, &str)]) -> f32 {
+    let font = theme::medium(14.0);
+    let widest = options
+        .iter()
+        .map(|(_, label)| text_width(ui, label, &font))
+        .fold(0.0, f32::max);
+    (widest + 28.0).max(56.0)
+}
+
+/// The full width `segmented` takes for these options, for centering it.
+pub fn segmented_width<T>(ui: &egui::Ui, options: &[(T, &str)]) -> f32 {
+    let n = options.len() as f32;
+    // Segments, the gaps between them, the inner margin and the border.
+    n * segment_width(ui, options) + (n - 1.0) * 2.0 + 2.0 * 3.0 + 2.0
 }
 
 /// Fill and border of a selectable card or tile. Unselected cards ease
