@@ -295,7 +295,7 @@ fn visuals(p: &Palette, dark: bool) -> Visuals {
     v.widgets.inactive.fg_stroke = Stroke::new(1.0, p.text);
     v.widgets.hovered.weak_bg_fill = p.raised;
     v.widgets.hovered.bg_fill = p.raised;
-    v.widgets.hovered.bg_stroke = Stroke::new(1.0, p.border);
+    v.widgets.hovered.bg_stroke = Stroke::new(1.0, p.faint);
     v.widgets.hovered.fg_stroke = Stroke::new(1.5, p.text);
     v.widgets.active.weak_bg_fill = p.accent;
     v.widgets.active.bg_fill = p.accent;

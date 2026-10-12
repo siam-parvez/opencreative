@@ -6,7 +6,7 @@ use opencreative_sensors::ClaudeStatus;
 use crate::pages::{header, setting_row};
 use crate::prefs::Appearance;
 use crate::theme::{self, Palette};
-use crate::widgets::{chip, segmented, toggle};
+use crate::widgets::{card_look, chip, paint_mini_window, preview_tiles, toggle};
 use crate::{App, SERVICE_SUPPORTED, service};
 
 const REPOSITORY: &str = "https://github.com/siam-parvez/opencreative";
@@ -17,23 +17,41 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     let p = Palette::of(&ctx);
 
     group(ui, "Appearance", |ui| {
-        setting_row(ui, "Theme", "Light, dark, or follow the desktop.", |ui| {
-            let mut appearance = app.prefs.appearance;
-            if segmented(
-                ui,
-                &mut appearance,
-                &[
-                    (Appearance::System, "System"),
-                    (Appearance::Light, "Light"),
-                    (Appearance::Dark, "Dark"),
-                ],
-            ) {
-                app.prefs.appearance = appearance;
-                ctx.set_theme(appearance.preference());
-                app.save_prefs();
-            }
-        });
-        ui.add_space(12.0);
+        ui.label(
+            egui::RichText::new("Theme")
+                .font(theme::medium(15.0))
+                .color(p.text),
+        );
+        ui.label(egui::RichText::new("Light, dark, or follow the desktop.").color(p.muted));
+        ui.add_space(8.0);
+        let mut appearance = app.prefs.appearance;
+        if preview_tiles(
+            ui,
+            &mut appearance,
+            &[
+                (Appearance::System, "System"),
+                (Appearance::Light, "Light"),
+                (Appearance::Dark, "Dark"),
+            ],
+            egui::vec2(146.0, 112.0),
+            |painter, rect, option| match option {
+                Appearance::Light => paint_mini_window(painter, rect, &theme::LIGHT),
+                Appearance::Dark => paint_mini_window(painter, rect, &theme::DARK),
+                // Light on the left, dark on the right.
+                Appearance::System => {
+                    let half = rect.center().x;
+                    let left = egui::Rect::from_min_max(rect.min, egui::pos2(half, rect.max.y));
+                    let right = egui::Rect::from_min_max(egui::pos2(half, rect.min.y), rect.max);
+                    paint_mini_window(&painter.with_clip_rect(left), rect, &theme::LIGHT);
+                    paint_mini_window(&painter.with_clip_rect(right), rect, &theme::DARK);
+                }
+            },
+        ) {
+            app.prefs.appearance = appearance;
+            ctx.set_theme(appearance.preference());
+            app.save_prefs();
+        }
+        ui.add_space(16.0);
         font_picker(app, ui);
     });
 
@@ -322,16 +340,17 @@ fn font_picker(app: &mut App, ui: &mut egui::Ui) {
                         .id_salt(("app-font", font.name()))
                         .sense(egui::Sense::click()),
                     |ui| {
+                        let (fill, stroke) = card_look(
+                            ui,
+                            ui.id(),
+                            selected,
+                            ui.response().hovered(),
+                            p.raised,
+                            p.card,
+                        );
                         egui::Frame::new()
-                            .fill(if selected {
-                                p.raised
-                            } else {
-                                egui::Color32::TRANSPARENT
-                            })
-                            .stroke(egui::Stroke::new(
-                                if selected { 2.0 } else { 1.0 },
-                                if selected { p.accent } else { p.border },
-                            ))
+                            .fill(fill)
+                            .stroke(stroke)
                             .corner_radius(theme::SMALL_RADIUS)
                             .inner_margin(egui::Margin::symmetric(14, 10))
                             .show(ui, |ui| {
