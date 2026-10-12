@@ -11,86 +11,56 @@ alternative to DeepCool's Windows-only DeepCreative app.
 > by DeepCool. "DeepCool" and "DeepCreative" are trademarks of their owners.
 
 <p>
-  <img src="docs/screenshots/devices.png" alt="OpenCreative devices page: the cooler pictured with its live screen" width="100%">
-</p>
-<p>
-  <img src="docs/screenshots/dashboard.png" alt="OpenCreative dashboard" width="49%">
-  <img src="docs/screenshots/device.png" alt="OpenCreative cooler screen settings" width="49%">
+  <img src="docs/screenshots/device.png" alt="The cooler screen editor: the live preview, a floating toolbar and the Customize panel" width="100%">
 </p>
 
 ## Install
 
-1. Download the file for your system from the
-   [latest release](https://github.com/siam-parvez/opencreative/releases/latest):
+Download the file for your system from the
+[latest release](https://github.com/siam-parvez/opencreative/releases/latest)
+and open it in your software center, or:
 
-   | Your system | Download |
-   |---|---|
-   | Ubuntu, Debian, Mint, Pop!_OS | `opencreative_…_amd64.deb` |
-   | Fedora, openSUSE | `opencreative-…x86_64.rpm` |
-   | Anything else | `OpenCreative-…-x86_64.AppImage` |
+```sh
+sudo apt install ./opencreative_*_amd64.deb     # Ubuntu, Debian, Mint, Pop!_OS
+sudo dnf install ./opencreative-*.x86_64.rpm    # Fedora, openSUSE
+```
 
-   On an ARM computer, pick the `arm64` / `aarch64` file instead.
+Anything else: the `.AppImage` (make it executable, then open it). ARM: the
+`arm64` / `aarch64` files.
 
-2. Open it in your software center and click **Install**, or in a terminal:
+Open **OpenCreative** from your app menu. The cooler is found automatically
+and its screen keeps running in the background, after restarts too. To
+update, install the new file the same way.
 
-   ```sh
-   sudo apt install ./opencreative_*_amd64.deb     # Ubuntu, Debian
-   sudo dnf install ./opencreative-*.x86_64.rpm    # Fedora
-   ```
+## Features
 
-3. Open **OpenCreative** from your app menu.
-
-That's it. The cooler is found automatically, and its screen keeps running in
-the background from then on, with the window closed and after restarts.
-
-**AppImage:** make it executable (right-click → Properties → allow running as
-a program) and open it. In the app's **Settings**, turn on **Allow access to
-the cooler** (asks for your password once) and **Show in the app menu**.
-
-**Updating:** install the new file the same way. OpenCreative restarts on the
-new version by itself and keeps your settings.
-
-## What it does
-
-- **Digital mode**: live readings on the cooler, one large and two small, of
-  your choice (CPU or GPU temperature, load, frequency, power, RAM), in three
-  looks: **Lines**, **HUD** (with live charts) and **Gauges**. One-click
-  presets cover the usual combinations.
-- **Multimedia mode**: playlists of **Images**, **GIFs**, **Videos** or
-  **YouTube** links, each kind on its own tab, or a plain **Color**. Drop files
-  on the window or use Browse. Drag the preview to move a picture and scroll to
-  zoom. Select several items with Ctrl or Shift and press Delete.
-- **Music mode**: bars that move with whatever your speakers or headphones are
-  playing, rising or mirrored, in one color or a rainbow by pitch.
-- **Display**: brightness, rotation for any pump orientation, and Zen mode (a
-  calm clock).
-- **Your look**: dark or light theme, and a choice of app fonts (Inter,
-  Geist, Manrope, IBM Plex Sans).
-- **Dashboard**: this computer's CPU, GPU, memory, storage and network at a
-  glance, with a two-minute history.
-- The preview in the app shows exactly what's on the cooler, frame for frame.
+- **Live data**: CPU, GPU and RAM readings in three looks (Lines, HUD, Gauges)
+- **Pictures & video**: images, GIFs, videos and YouTube playlists, or a color
+- **Music**: bars that move with what's playing
+- **Top-bar menu**: switch modes, looks, brightness, colors and rotation
+- **Dashboard**: your computer's CPU, GPU, memory, storage and network
+- Dark and light themes, a choice of fonts, Zen mode (a calm clock)
 
 <p>
-  <img src="docs/screenshots/skin-lines.png" alt="Lines skin: three readings framed by thin lines over a tile grid" width="32%">
-  <img src="docs/screenshots/skin-hud.png" alt="HUD skin: neon frames with network and usage charts" width="32%">
-  <img src="docs/screenshots/skin-gauges.png" alt="Gauges skin: CPU temperature and load gauges" width="32%">
+  <img src="docs/screenshots/devices.png" alt="Devices page: the cooler pictured with its live screen" width="49%">
+  <img src="docs/screenshots/dashboard.png" alt="Dashboard: CPU, GPU, memory, storage and network" width="49%">
+</p>
+<p>
+  <img src="docs/screenshots/device-light.png" alt="The editor in the light theme" width="55%">
+  <img src="docs/screenshots/device-compact.png" alt="A smaller window: the sidebar folds to icons" width="44%">
+</p>
+<p>
+  <img src="docs/screenshots/skin-lines.png" alt="Lines skin" width="32%">
+  <img src="docs/screenshots/skin-hud.png" alt="HUD skin" width="32%">
+  <img src="docs/screenshots/skin-gauges.png" alt="Gauges skin" width="32%">
 </p>
 
-### Optional extras
-
-- **YouTube** needs a small helper, yt-dlp. OpenCreative downloads it for you
-  the first time you add a YouTube link. Videos play through ffmpeg, which the
-  packages install for you.
-- **CPU power readings** are off by default: they need the CPU's energy
-  counters, which are a known security side channel
-  ([CVE-2020-8694](https://nvd.nist.gov/vuln/detail/CVE-2020-8694)). Turn on
-  **Settings → CPU and PC power** if you want them. "PC power" only shows a
-  number on computers that can measure more than the CPU.
-- **Claude usage**: if you use [Claude Code](https://claude.com/claude-code),
-  **Settings → Integrations → Claude usage** shows your 5-hour and weekly
-  limits on the dashboard and as cooler readings. It reuses the login Claude
-  Code already keeps on this computer, sends it only to Anthropic's usage
-  endpoint, and never stores it. Not affiliated with Anthropic.
+**Optional:** YouTube downloads its helper (yt-dlp) the first time you add a
+link. CPU power readings are off by default
+([why](https://nvd.nist.gov/vuln/detail/CVE-2020-8694)); turn them on in
+**Settings**. [Claude Code](https://claude.com/claude-code) users can show
+their usage limits (**Settings → Integrations**; not affiliated with
+Anthropic).
 
 ## Supported coolers
 
@@ -98,27 +68,17 @@ new version by itself and keeps your settings.
 |---|---|---|
 | DeepCool LM240 / LM360 | `3633:0026` | 320 × 240 |
 
-Have another DeepCool cooler with a screen?
-[Adding a device](docs/adding-a-device.md) explains what we need to support it.
+Have another one? [Request support](https://github.com/siam-parvez/opencreative/issues/new?template=new-device.yml)
+or see [adding a device](docs/adding-a-device.md).
 
-## Troubleshooting
+## Help
 
-- **"No cooler connected"**: unplug the cooler's USB cable and plug it back
-  in. If it still isn't found, use **Settings → Allow access to the cooler**.
-- **YouTube says it needs yt-dlp**: click **Download yt-dlp** on the YouTube
-  tab.
-- **The music bars say NO AUDIO**: OpenCreative listens through PipeWire or
-  PulseAudio; check that sound is playing through your normal output.
-- **Anything else**:
-  [open an issue](https://github.com/siam-parvez/opencreative/issues) with
-  what you see and the output of `opencreative status`.
+- **No cooler found**: replug its USB cable, or use **Settings → Allow access to the cooler**.
+- **Music bars say NO AUDIO**: check that sound plays through PipeWire or PulseAudio.
+- **Anything else**: [open an issue](https://github.com/siam-parvez/opencreative/issues).
 
-## Uninstall
-
-- From a `.deb` or `.rpm`: remove **OpenCreative** in your software center, or
-  run `sudo apt remove opencreative` / `sudo dnf remove opencreative`.
-- AppImage: right-click OpenCreative in the app menu → **Uninstall
-  OpenCreative**, or use **Settings → Uninstall** in the app.
+**Uninstall:** remove OpenCreative in your software center
+(`sudo apt remove opencreative`), or for the AppImage use **Settings → Uninstall**.
 
 <details>
 <summary><b>Command line</b></summary>
