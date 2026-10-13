@@ -149,8 +149,8 @@ cargo install --path crates/opencreative-gui
 opencreative-gui
 ```
 
-Then, in the app's **Settings**, turn on **Allow access to the cooler**,
-**Show in the app menu** and **Start with the computer**.
+Then, in the app's **Settings**, turn on **Allow access to the cooler**
+and **Start with the computer**.
 
 The workspace:
 

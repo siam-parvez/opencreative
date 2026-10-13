@@ -1,4 +1,4 @@
-//! Settings: background service, USB access, app menu, appearance, about.
+//! Settings: background service, USB access, appearance, about.
 
 use eframe::egui;
 use opencreative_sensors::ClaudeStatus;
@@ -187,36 +187,6 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                             app.run_task(&ctx, "Turning off power readings", || {
                                 service::set_power_rule(false)
                             });
-                        }
-                    }
-                },
-            );
-        });
-
-        group(ui, "App menu", |ui| {
-            setting_row(
-                ui,
-                "Show in the app menu",
-                if service::packaged() {
-                    "Your package already adds OpenCreative to the app menu."
-                } else {
-                    "Adds OpenCreative with its icon to your desktop's launcher."
-                },
-                |ui| {
-                    if service::packaged() {
-                        return;
-                    }
-                    let mut on = service::desktop_entry_installed();
-                    if toggle(ui, &mut on).changed() {
-                        let result = if on {
-                            service::install_desktop_entry()
-                        } else {
-                            service::remove_desktop_entry()
-                        };
-                        match result {
-                            Ok(()) if on => app.notify("Added to the app menu."),
-                            Ok(()) => app.notify("Removed from the app menu."),
-                            Err(e) => app.fail(e),
                         }
                     }
                 },

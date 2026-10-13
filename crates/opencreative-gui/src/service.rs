@@ -41,8 +41,6 @@ const POWER_RULE: Rule = Rule {
     trigger: "udevadm trigger --subsystem-match=powercap --action=add && udevadm settle",
 };
 
-const DESKTOP_TEMPLATE: &str = include_str!("../../../packaging/linux/opencreative.desktop");
-
 /// What systemd says about the background service.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ServiceState {
@@ -113,14 +111,6 @@ fn install_unit() -> Result<()> {
     )?;
     let unit = UNIT_TEMPLATE.replace(UNIT_EXEC_PLACEHOLDER, &cli.display().to_string());
     write(&path, unit.as_bytes())
-}
-
-/// What launches this app from outside: the AppImage file when running
-/// from one (its mount point changes every run), else this binary.
-fn launcher() -> Option<PathBuf> {
-    env::var_os("APPIMAGE")
-        .map(PathBuf::from)
-        .or_else(|| env::current_exe().ok())
 }
 
 /// Installed by a distribution package (binary under `/usr`, not
@@ -266,51 +256,6 @@ fn as_root(script: &str) -> Result<()> {
     }
 }
 
-fn desktop_entry_path() -> Option<PathBuf> {
-    Some(dirs::data_dir()?.join("applications/opencreative.desktop"))
-}
-
-fn icon_path() -> Option<PathBuf> {
-    Some(dirs::data_dir()?.join("icons/hicolor/256x256/apps/opencreative.png"))
-}
-
-pub fn desktop_entry_installed() -> bool {
-    desktop_entry_path().is_some_and(|p| p.exists())
-}
-
-/// Adds OpenCreative to the desktop's app menu, launching this app. The
-/// entry's "Uninstall" action reopens the app on its uninstall prompt.
-pub fn install_desktop_entry() -> Result<()> {
-    let exe = launcher().ok_or("couldn't find this program")?;
-    // Both the main and the "Uninstall" action's Exec lines.
-    let entry = DESKTOP_TEMPLATE.replace(
-        "Exec=opencreative-gui",
-        &format!("Exec=\"{}\"", exe.display()),
-    );
-    let icon = icon_path().ok_or("no data directory")?;
-    if let Some(dir) = icon.parent() {
-        fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-    }
-    opencreative_render::icon::icon(256)
-        .save_png(&icon)
-        .map_err(|e| format!("{}: {e}", icon.display()))?;
-    write(
-        &desktop_entry_path().ok_or("no data directory")?,
-        entry.as_bytes(),
-    )
-}
-
-pub fn remove_desktop_entry() -> Result<()> {
-    for path in [desktop_entry_path(), icon_path()].into_iter().flatten() {
-        match fs::remove_file(&path) {
-            Ok(()) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => return Err(format!("{}: {e}", path.display())),
-        }
-    }
-    Ok(())
-}
-
 fn write(path: &Path, contents: &[u8]) -> Result<()> {
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
@@ -325,12 +270,6 @@ mod tests {
     #[test]
     fn unit_template_has_the_exec_placeholder() {
         assert!(UNIT_TEMPLATE.contains(&format!("ExecStart={UNIT_EXEC_PLACEHOLDER} daemon")));
-    }
-
-    #[test]
-    fn desktop_template_has_the_exec_line() {
-        assert!(DESKTOP_TEMPLATE.contains("\nExec=opencreative-gui\n"));
-        assert!(DESKTOP_TEMPLATE.contains("\nExec=opencreative-gui --uninstall\n"));
     }
 
     #[test]
