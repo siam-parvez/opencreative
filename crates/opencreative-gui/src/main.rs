@@ -474,7 +474,14 @@ impl App {
             return;
         }
         if self.page == Page::Settings {
-            self.service = Some(service::query());
+            let state = service::query();
+            self.service = Some(state);
+            // The service came up after this window started its own daemon:
+            // hand the device and socket over to it.
+            if state.active && self.embedded.is_some() {
+                self.stop_embedded();
+                self.link = Link::WaitingForService(Instant::now() + SERVICE_START_TIMEOUT);
+            }
         }
         if self.client.is_none() {
             self.connect();

@@ -367,11 +367,17 @@ fn reading(
         VALUE,
     );
 
-    let label_size = if matches!(size, Size::Large) {
+    let mut label_size = if matches!(size, Size::Large) {
         12.0
     } else {
         11.5
     } * scale;
+    // Long labels ("WEEKLY LIMIT") shrink to stay on the screen.
+    let label_w = |s: f32| s * 1.3 + 6.0 * scale + text::measure(metric.label(), s, Weight::Label);
+    let room = right - x - 4.0 * scale;
+    if label_w(label_size) > room {
+        label_size *= room / label_w(label_size);
+    }
     let ly = top + h * label_at;
     let icon = label_size * 1.3;
     metric_icon(pm, metric, x + icon / 2.0 + scale, ly, icon);

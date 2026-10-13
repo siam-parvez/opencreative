@@ -89,8 +89,8 @@ impl Metric {
             Metric::RamUsage => "RAM USAGE",
             Metric::RamUsed => "RAM USED",
             Metric::SystemPower => "PC POWER",
-            Metric::ClaudeSession => "5H LIMIT",
-            Metric::ClaudeWeekly => "WEEKLY LIMIT",
+            Metric::ClaudeSession => "5 HOURS",
+            Metric::ClaudeWeekly => "WEEKLY",
         }
     }
 
